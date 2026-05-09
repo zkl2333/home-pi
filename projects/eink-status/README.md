@@ -5,7 +5,8 @@
 ## 依赖
 
 - 硬件：Raspberry Pi（已开 SPI）+ Waveshare 2.13" V3 e-Paper + PiSugar 3
-- 系统包：`python3-pil`、`python3-numpy`、`python3-spidev`、`python3-rpi.gpio`
+- 系统包：`python3-pil`、`python3-numpy`、`python3-spidev`、`python3-rpi.gpio`、`fonts-wqy-microhei`
+- Python 库（pip --user）：`pisugar`（[PiSugar 官方库](https://github.com/PiSugar/pisugar-server-py)）
 - 微雪官方 lib 在 `/home/pi/e-Paper/RaspberryPi_JetsonNano/python/lib/waveshare_epd/`
 - `pisugar-server` 在 `127.0.0.1:8423` 监听（默认即是）
 

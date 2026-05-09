@@ -2,9 +2,9 @@
 """墨水屏状态显示常驻 daemon。
 
 事件驱动模型：
-- 长连接监听 PiSugar TCP（127.0.0.1:8423）推送的 tap 事件 → 立即刷新
+- pisugar-server-py 库内部维护 event 长连接，PiSugar tap (single/double/long) 通过回调推到队列
 - 后台线程每 POLL_INTERVAL 秒采样一次状态，仅在关键字段变化时刷新
-  关键字段：分钟 / IP / 电量整数% / 充电状态 / 接电状态 / WiFi 信号格数
+  关键字段：分钟 / IP / 电量整数% / 充电状态 / 接电状态
 - 局刷为主；连续 N 次局刷或距上次全刷 > FULL_REFRESH_MAX_AGE_SEC 时做一次全刷
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -26,17 +26,40 @@ sys.path.insert(0, str(EPAPER_LIB))
 
 from waveshare_epd import epd2in13_V3  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
+from pisugar import PiSugarServer, connect_tcp  # noqa: E402
 
 PISUGAR_HOST = ('127.0.0.1', 8423)
 FONT_DEJAVU = '/usr/share/fonts/truetype/dejavu'
 FONT_CJK = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'
 
 ROTATE_180 = True
-POLL_INTERVAL = 10.0                    # 状态采样间隔
-PARTIAL_REFRESH_LIMIT = 30              # 连续局刷上限，超过强制全刷清残影
-FULL_REFRESH_MAX_AGE_SEC = 3600         # 至少每小时做一次全刷
-SAFETY_REFRESH_MAX_AGE_SEC = 600        # 兜底：10 分钟没刷过就强制刷一次
-TAP_RECONNECT_DELAY_SEC = 5
+POLL_INTERVAL = 10.0
+PARTIAL_REFRESH_LIMIT = 30
+FULL_REFRESH_MAX_AGE_SEC = 3600
+SAFETY_REFRESH_MAX_AGE_SEC = 600
+
+
+# ─── PiSugar 单例 ───────────────────────────────────
+
+_PISUGAR: PiSugarServer | None = None
+_PISUGAR_LOCK = threading.Lock()
+
+
+def get_pisugar() -> PiSugarServer:
+    global _PISUGAR
+    with _PISUGAR_LOCK:
+        if _PISUGAR is None:
+            conn, event_conn = connect_tcp(*PISUGAR_HOST)
+            _PISUGAR = PiSugarServer(conn, event_conn)
+    return _PISUGAR
+
+
+def safe(fn, default=None):
+    """忽略 PiSugar 偶发异常，返回默认值。"""
+    try:
+        return fn()
+    except Exception:
+        return default
 
 
 # ─── 数据采集 ──────────────────────────────────────
@@ -54,51 +77,14 @@ class Snapshot:
     bat_v: float | None
     bat_i: float | None
     rssi: int | None
-    rssi_bars: int          # 0-4
-    cpu_temp: int | None    # °C 整数
+    rssi_bars: int
+    cpu_temp: int | None
     load1: float
     used_mb: int
     total_mb: int
     used_gb: float
     total_gb: float
     uptime_str: str
-
-
-def _value(line: str) -> str:
-    return line.split(':', 1)[1].strip() if ':' in line else line.strip()
-
-
-def _safe_float(s: str) -> float | None:
-    try:
-        return float(s)
-    except Exception:
-        return None
-
-
-def query_pisugar_batch(cmds: list[str], timeout: float = 2.0) -> dict[str, str]:
-    """一条短连接里发多条命令，回执按行 key:value 解析。"""
-    out: dict[str, str] = {}
-    try:
-        with socket.create_connection(PISUGAR_HOST, timeout=timeout) as s:
-            s.sendall(('\n'.join(cmds) + '\n').encode())
-            s.settimeout(timeout)
-            buf = b''
-            deadline = time.time() + timeout
-            while len(buf.splitlines()) < len(cmds) and time.time() < deadline:
-                try:
-                    chunk = s.recv(4096)
-                except socket.timeout:
-                    break
-                if not chunk:
-                    break
-                buf += chunk
-            for line in buf.decode(errors='replace').splitlines():
-                if ':' in line:
-                    k, _, v = line.partition(':')
-                    out[k.strip()] = v.strip()
-    except Exception:
-        pass
-    return out
 
 
 def get_ip() -> str:
@@ -176,11 +162,8 @@ def rssi_to_bars(rssi: int | None) -> int:
 
 def take_snapshot() -> Snapshot:
     now = datetime.now()
-    pi = query_pisugar_batch([
-        'get battery', 'get battery_v', 'get battery_i',
-        'get battery_charging', 'get battery_power_plugged',
-    ])
-    battery_raw = _safe_float(pi.get('battery', ''))
+    ps = get_pisugar()
+    battery_raw = safe(ps.get_battery_level)
     rssi = get_wifi_rssi()
     used_mb, total_mb = get_mem()
     used_gb, total_gb = get_disk('/')
@@ -191,10 +174,10 @@ def take_snapshot() -> Snapshot:
         hostname=socket.gethostname(),
         battery_pct=int(battery_raw) if battery_raw is not None else None,
         battery_raw=battery_raw,
-        charging=pi.get('battery_charging', '').lower() == 'true',
-        plugged=pi.get('battery_power_plugged', '').lower() == 'true',
-        bat_v=_safe_float(pi.get('battery_v', '')),
-        bat_i=_safe_float(pi.get('battery_i', '')),
+        charging=safe(ps.get_battery_charging, False),
+        plugged=safe(ps.get_battery_power_plugged, False),
+        bat_v=safe(ps.get_battery_voltage),
+        bat_i=safe(ps.get_battery_current),
         rssi=rssi,
         rssi_bars=rssi_to_bars(rssi),
         cpu_temp=get_cpu_temp(),
@@ -362,8 +345,6 @@ def render(image: Image.Image, s: Snapshot) -> None:
 # ─── 屏幕控制器 ─────────────────────────────────────
 
 class ScreenController:
-    """封装 epd 句柄、刷新策略。"""
-
     def __init__(self):
         self.epd = epd2in13_V3.EPD()
         self.epd.init()
@@ -415,32 +396,9 @@ class ScreenController:
             pass
 
 
-# ─── 后台线程 ──────────────────────────────────────
-
-def tap_listener(events: queue.Queue) -> None:
-    """长连接监听 PiSugar TCP 推送的 tap 事件。空闲时连接保持，不超时。"""
-    while True:
-        try:
-            s = socket.create_connection(PISUGAR_HOST, timeout=10)
-            s.settimeout(None)  # 连上后取消超时，readline 阻塞等推送
-            try:
-                f = s.makefile('rb')
-                while True:
-                    line = f.readline()
-                    if not line:
-                        break
-                    msg = line.decode(errors='replace').strip()
-                    if msg in ('single', 'double', 'long'):
-                        events.put(('tap', msg))
-            finally:
-                s.close()
-        except Exception as e:
-            print(f'[tap_listener] reconnect after error: {e}', flush=True)
-        time.sleep(TAP_RECONNECT_DELAY_SEC)
-
+# ─── 后台轮询线程 ──────────────────────────────────
 
 def poll_loop(events: queue.Queue, ctrl: ScreenController) -> None:
-    """周期采样，把"显著变化"事件入队。"""
     while True:
         time.sleep(POLL_INTERVAL)
         try:
@@ -461,17 +419,23 @@ def main() -> int:
     ctrl = ScreenController()
     events: queue.Queue = queue.Queue()
 
+    # 注册 PiSugar tap 回调
+    ps = get_pisugar()
+    for kind in ('single', 'double', 'long'):
+        getattr(ps, f'register_{kind}_tap_handler')(
+            (lambda k=kind: events.put(('tap', k)))
+        )
+
     # 首次全刷
     s0 = take_snapshot()
     ctrl.refresh(s0, 'startup')
 
-    threading.Thread(target=tap_listener, args=(events,), daemon=True).start()
     threading.Thread(target=poll_loop, args=(events, ctrl), daemon=True).start()
 
     try:
         while True:
             kind, payload = events.get()
-            # 去抖：如果队列里还有同类型事件，吸收掉
+            # 去抖：吸收已堆积的相同事件
             while True:
                 try:
                     events.get_nowait()

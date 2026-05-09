@@ -26,6 +26,9 @@ sudo apt-get install -y \
     python3-pip python3-pil python3-numpy python3-spidev python3-rpi.gpio \
     fonts-wqy-microhei
 
+log "安装 Python 库（user 级，不污染系统 site-packages）"
+pip3 install --user pisugar
+
 # ─── 2. 启用 SPI / I2C ────────────────────────────
 log "启用 SPI / I2C（如未启用）"
 sudo raspi-config nonint do_spi 0 || true
