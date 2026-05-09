@@ -1,0 +1,18 @@
+[Unit]
+Description=e-paper status display daemon (event-driven)
+After=network-online.target pisugar-server.service
+Wants=network-online.target pisugar-server.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+SupplementaryGroups=spi gpio
+WorkingDirectory=/home/pi/projects/eink-status
+ExecStart=/usr/bin/python3 -u /home/pi/projects/eink-status/eink_status.py
+Restart=on-failure
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

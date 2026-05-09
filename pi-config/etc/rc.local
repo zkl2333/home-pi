@@ -1,0 +1,11 @@
+#!/bin/sh -e
+# Pi 上 /etc/rc.local 的内容快照（启动时执行，需 chmod +x）
+# 当前作用：启动 PiSugar 蓝牙配 WiFi 工具
+
+_IP=$(hostname -I) || true
+if [ "$_IP" ]; then
+  printf "My IP address is %s\n" "$_IP"
+fi
+
+sudo /home/pi/sugar-wifi-conf/build/sugar-wifi-conf pisugar /home/pi/sugar-wifi-conf/build/custom_config.json&
+exit 0

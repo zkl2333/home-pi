@@ -1,0 +1,22 @@
+# 上游仓库参考（bootstrap.sh 在 Pi 上会自行 git clone，不入仓库）
+upstream/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 任何含密码 / 私有覆盖的文件一律不入库
+*secret*
+*password*
+*.local.json
+local/
+

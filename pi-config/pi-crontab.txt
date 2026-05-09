@@ -1,0 +1,5 @@
+# pi 用户 crontab 内容（用 `crontab pi-config/pi-crontab.txt` 安装）
+# 由 bootstrap.sh 自动写入
+
+@reboot /home/pi/.ssh/sync-github-keys.sh  # github-keys-sync
+0 * * * * /home/pi/.ssh/sync-github-keys.sh  # github-keys-sync
