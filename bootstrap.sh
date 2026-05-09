@@ -47,6 +47,18 @@ else
   echo "pisugar-server 已存在，跳过"
 fi
 
+log "PiSugar 配置 patch：开启 RTC ↔ 系统时间自动同步"
+sudo apt-get install -y jq >/dev/null
+PI_CFG=/etc/pisugar-server/config.json
+if [ -f "$PI_CFG" ] && [ "$(sudo jq -r '.auto_rtc_sync' "$PI_CFG")" != "true" ]; then
+  sudo cp "$PI_CFG" "${PI_CFG}.bak"
+  sudo jq '.auto_rtc_sync = true' "${PI_CFG}.bak" | sudo tee "$PI_CFG" >/dev/null
+  sudo systemctl restart pisugar-server
+  echo "已启用 auto_rtc_sync"
+else
+  echo "auto_rtc_sync 已是 true 或配置不存在，跳过"
+fi
+
 # ─── 5. SSH 公钥定时同步 ─────────────────────────
 log "部署 GitHub 公钥同步脚本到 ~/.ssh/sync-github-keys.sh"
 mkdir -p "${PI_HOME}/.ssh"

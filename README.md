@@ -74,6 +74,8 @@ bash bootstrap.sh
 | `:8421/8422/8423` pisugar-server | PiSugar HTTP / WebSocket / TCP |
 | `eink-status.service` | 墨水屏状态显示 daemon（事件驱动）|
 
+PiSugar 配置项 `auto_rtc_sync = true`（bootstrap 会 patch）：开机自动从 RTC 读时间到系统、关机前从系统写回 RTC，断网时也能保留正确时间。
+
 ## SSH 公钥管理（GitHub 单一可信源）
 
 Pi 上 cron 任务每小时和每次开机时从 `https://api.github.com/users/zkl2333/keys` 拉取，
