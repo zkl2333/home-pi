@@ -47,7 +47,7 @@ else
   echo "pisugar-server 已存在，跳过"
 fi
 
-log "PiSugar 配置 patch：开启 RTC ↔ 系统时间自动同步"
+log "PiSugar 配置 patch：开启 RTC ↔ 系统时间自动同步（pisugar-server 层）"
 sudo apt-get install -y jq >/dev/null
 PI_CFG=/etc/pisugar-server/config.json
 if [ -f "$PI_CFG" ] && [ "$(sudo jq -r '.auto_rtc_sync' "$PI_CFG")" != "true" ]; then
@@ -57,6 +57,23 @@ if [ -f "$PI_CFG" ] && [ "$(sudo jq -r '.auto_rtc_sync' "$PI_CFG")" != "true" ];
   echo "已启用 auto_rtc_sync"
 else
   echo "auto_rtc_sync 已是 true 或配置不存在，跳过"
+fi
+
+log "把 PiSugar RTC 注册成内核硬件时钟（/dev/rtc0）"
+# 内核层 i2c-rtc overlay：让 hwclock / systemd-timesyncd 能直接用 RTC，
+# 比 pisugar-server 启动还早就拥有正确系统时间。需重启生效。
+if grep -q '^dtoverlay=i2c-rtc' /boot/config.txt; then
+  echo "已存在 dtoverlay=i2c-rtc，跳过"
+else
+  sudo cp /boot/config.txt "/boot/config.txt.bak.$(date +%s)"
+  echo 'dtoverlay=i2c-rtc,ds3231' | sudo tee -a /boot/config.txt >/dev/null
+  echo "已追加 dtoverlay=i2c-rtc,ds3231 — 重启后生效"
+  REBOOT_NEEDED=1
+fi
+# 内核 RTC 接管后 fake-hwclock 没用了
+if systemctl is-enabled --quiet fake-hwclock 2>/dev/null; then
+  sudo systemctl disable --now fake-hwclock
+  echo "已禁用 fake-hwclock"
 fi
 
 # ─── 5. SSH 公钥定时同步 ─────────────────────────
@@ -100,4 +117,8 @@ log "全部完成。"
 echo "建议手动确认："
 echo "  • systemctl status eink-status pisugar-server"
 echo "  • crontab -l"
-echo "  • 重启一次让 SPI / rc.local 生效（如本次有更新）"
+if [ "${REBOOT_NEEDED:-0}" = "1" ]; then
+  echo "  • ⚠️  需要重启：本次改了 /boot/config.txt（i2c-rtc 覆盖层）"
+  echo "      sudo reboot"
+fi
+echo "  • 重启后验证 RTC：ls /dev/rtc0 && sudo hwclock -r"
