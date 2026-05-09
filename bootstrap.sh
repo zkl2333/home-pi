@@ -18,6 +18,38 @@ if [ "$(id -un)" != "pi" ]; then
   echo "建议以 pi 用户运行；当前是 $(id -un)。"
 fi
 
+# ─── 0.5. APT 国内镜像（清华 TUNA） ───────────────
+# Pi 在国内网络下，官方源 raspbian.raspberrypi.org / archive.raspberrypi.org 慢且偶发超时。
+# 切到 TUNA：bullseye / armv7。bookworm 同源路径不变；换大版本时改下面 SUITE 即可。
+# 想换别家镜像（中科大 / 阿里）改 MIRROR_* 两行就行。
+log "切换 APT 源到国内镜像（清华 TUNA，幂等）"
+SUITE="$(. /etc/os-release && echo "$VERSION_CODENAME")"  # bullseye / bookworm
+MIRROR_RASPBIAN="https://mirrors.tuna.tsinghua.edu.cn/raspbian/raspbian"
+MIRROR_RASPI="https://mirrors.tuna.tsinghua.edu.cn/raspberrypi"
+
+if ! grep -q "tuna.tsinghua.edu.cn/raspbian" /etc/apt/sources.list 2>/dev/null; then
+  sudo cp /etc/apt/sources.list "/etc/apt/sources.list.bak.$(date +%s)" 2>/dev/null || true
+  sudo tee /etc/apt/sources.list >/dev/null <<EOF
+deb ${MIRROR_RASPBIAN}/ ${SUITE} main contrib non-free rpi
+# deb-src ${MIRROR_RASPBIAN}/ ${SUITE} main contrib non-free rpi
+EOF
+  echo "已写入 /etc/apt/sources.list (TUNA, ${SUITE})"
+else
+  echo "/etc/apt/sources.list 已是 TUNA，跳过"
+fi
+
+RASPI_LIST=/etc/apt/sources.list.d/raspi.list
+if [ -f "$RASPI_LIST" ] && ! grep -q "tuna.tsinghua.edu.cn/raspberrypi" "$RASPI_LIST"; then
+  sudo cp "$RASPI_LIST" "${RASPI_LIST}.bak.$(date +%s)"
+  sudo tee "$RASPI_LIST" >/dev/null <<EOF
+deb ${MIRROR_RASPI}/ ${SUITE} main
+# deb-src ${MIRROR_RASPI}/ ${SUITE} main
+EOF
+  echo "已写入 ${RASPI_LIST} (TUNA, ${SUITE})"
+else
+  echo "${RASPI_LIST} 已是 TUNA 或不存在，跳过"
+fi
+
 # ─── 1. 系统包 ────────────────────────────────────
 log "安装系统依赖（apt）"
 sudo apt-get update -y
