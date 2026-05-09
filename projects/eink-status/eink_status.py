@@ -2,10 +2,13 @@
 """墨水屏状态显示常驻 daemon。
 
 事件驱动模型：
-- pisugar-server-py 库内部维护 event 长连接，PiSugar tap (single/double/long) 通过回调推到队列
+- 命令通道：每次查询用短连接，按行 key:value 解析、过滤掉混入的事件行
+- 事件通道：单独长连接读 tap 事件
 - 后台线程每 POLL_INTERVAL 秒采样一次状态，仅在关键字段变化时刷新
-  关键字段：分钟 / IP / 电量整数% / 充电状态 / 接电状态
-- 局刷为主；连续 N 次局刷或距上次全刷 > FULL_REFRESH_MAX_AGE_SEC 时做一次全刷
+
+按按钮时，本次刷新会在右下角显示一个反馈 tag（单击/双击/长按），下次刷新自动消失。
+
+注：曾尝试用 pisugar-server-py 0.1.1，命令解析对事件行 / 分包鲁棒性不足，已放弃。
 """
 from __future__ import annotations
 
@@ -26,7 +29,6 @@ sys.path.insert(0, str(EPAPER_LIB))
 
 from waveshare_epd import epd2in13_V3  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
-from pisugar import PiSugarServer, connect_tcp  # noqa: E402
 
 PISUGAR_HOST = ('127.0.0.1', 8423)
 FONT_DEJAVU = '/usr/share/fonts/truetype/dejavu'
@@ -37,29 +39,52 @@ POLL_INTERVAL = 10.0
 PARTIAL_REFRESH_LIMIT = 30
 FULL_REFRESH_MAX_AGE_SEC = 3600
 SAFETY_REFRESH_MAX_AGE_SEC = 600
+TAP_RECONNECT_DELAY_SEC = 5
+TAP_BADGE_LINGER_SEC = 5         # tap 反馈在屏幕上至少保留这么久
+
+TAP_LABELS = {'single': '单击', 'double': '双击', 'long': '长按'}
 
 
-# ─── PiSugar 单例 ───────────────────────────────────
+# ─── PiSugar 命令通道 ──────────────────────────────
 
-_PISUGAR: PiSugarServer | None = None
-_PISUGAR_LOCK = threading.Lock()
-
-
-def get_pisugar() -> PiSugarServer:
-    global _PISUGAR
-    with _PISUGAR_LOCK:
-        if _PISUGAR is None:
-            conn, event_conn = connect_tcp(*PISUGAR_HOST)
-            _PISUGAR = PiSugarServer(conn, event_conn)
-    return _PISUGAR
-
-
-def safe(fn, default=None):
-    """忽略 PiSugar 偶发异常，返回默认值。"""
+def query_pisugar(cmds: list[str], timeout: float = 2.0) -> dict[str, str]:
+    """短连接发多条 get 命令，按 key:value 解析并过滤事件行。"""
+    out: dict[str, str] = {}
     try:
-        return fn()
+        with socket.create_connection(PISUGAR_HOST, timeout=timeout) as s:
+            s.sendall(('\n'.join(cmds) + '\n').encode())
+            s.settimeout(timeout)
+            buf = b''
+            deadline = time.time() + timeout
+            while len(out) < len(cmds) and time.time() < deadline:
+                try:
+                    chunk = s.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+                # 解析尽可能多的完整行
+                while b'\n' in buf:
+                    line, buf = buf.split(b'\n', 1)
+                    text = line.decode(errors='replace').strip()
+                    if not text or text in ('single', 'double', 'long'):
+                        continue
+                    if ':' in text:
+                        k, _, v = text.partition(':')
+                        out[k.strip()] = v.strip()
     except Exception:
-        return default
+        pass
+    return out
+
+
+def _safe_float(s: str | None) -> float | None:
+    if s is None:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
 
 
 # ─── 数据采集 ──────────────────────────────────────
@@ -85,6 +110,7 @@ class Snapshot:
     used_gb: float
     total_gb: float
     uptime_str: str
+    tap_trigger: str | None = None   # 本次刷新若由按键触发，记录类型
 
 
 def get_ip() -> str:
@@ -160,10 +186,17 @@ def rssi_to_bars(rssi: int | None) -> int:
     return 0
 
 
-def take_snapshot() -> Snapshot:
+def take_snapshot(tap_trigger: str | None = None) -> Snapshot:
     now = datetime.now()
-    ps = get_pisugar()
-    battery_raw = safe(ps.get_battery_level)
+    pi = query_pisugar([
+        'get battery', 'get battery_v', 'get battery_i',
+        'get battery_charging', 'get battery_power_plugged',
+    ])
+    battery_raw = _safe_float(pi.get('battery'))
+    charging = pi.get('battery_charging', '').lower() == 'true'
+    plugged = pi.get('battery_power_plugged', '').lower() == 'true'
+    bat_v = _safe_float(pi.get('battery_v'))
+    bat_i = _safe_float(pi.get('battery_i'))
     rssi = get_wifi_rssi()
     used_mb, total_mb = get_mem()
     used_gb, total_gb = get_disk('/')
@@ -174,10 +207,10 @@ def take_snapshot() -> Snapshot:
         hostname=socket.gethostname(),
         battery_pct=int(battery_raw) if battery_raw is not None else None,
         battery_raw=battery_raw,
-        charging=safe(ps.get_battery_charging, False),
-        plugged=safe(ps.get_battery_power_plugged, False),
-        bat_v=safe(ps.get_battery_voltage),
-        bat_i=safe(ps.get_battery_current),
+        charging=charging,
+        plugged=plugged,
+        bat_v=bat_v,
+        bat_i=bat_i,
         rssi=rssi,
         rssi_bars=rssi_to_bars(rssi),
         cpu_temp=get_cpu_temp(),
@@ -187,12 +220,11 @@ def take_snapshot() -> Snapshot:
         used_gb=used_gb,
         total_gb=total_gb,
         uptime_str=get_uptime_str(),
+        tap_trigger=tap_trigger,
     )
 
 
 def _key_tuple(s: Snapshot) -> tuple:
-    """触发刷新的关键字段。电量按 5% 一档避免边界抖动；
-    RSSI 不入触发条件（它本身波动大，会被其他事件刷新时顺带更新）。"""
     bat_lvl = (s.battery_pct // 5) if s.battery_pct is not None else None
     return (s.minute_str, s.ip, bat_lvl, s.charging, s.plugged)
 
@@ -271,18 +303,31 @@ def draw_wifi_icon(d, x, y, bars):
     return x + 4 * (bar_w + gap)
 
 
+def draw_tap_badge(d, W, H, kind: str):
+    """右下角反白圆角矩形显示按键反馈，下次刷新自然消失。"""
+    label = TAP_LABELS.get(kind, kind)
+    f = ImageFont.truetype(FONT_CJK, 11)
+    pad_x, pad_y = 4, 1
+    tw = int(d.textlength(label, font=f))
+    bw = tw + pad_x * 2
+    bh = 14
+    bx2, by2 = W - 2, H - 2
+    bx1, by1 = bx2 - bw, by2 - bh
+    d.rectangle((bx1, by1, bx2, by2), fill=0)
+    d.text((bx1 + pad_x, by1 + pad_y - 1), label, font=f, fill=255)
+
+
 # ─── 渲染 ──────────────────────────────────────────
 
 def render(image: Image.Image, s: Snapshot) -> None:
     d = ImageDraw.Draw(image)
-    W, _ = image.size
+    W, H = image.size
 
     f_sb = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 13)
     f_xl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 20)
     f_cn = ImageFont.truetype(FONT_CJK, 12)
     f_mono = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 11)
 
-    # ── 状态栏 ──
     SB_H = 22
     icon_clock(d, 2, 6)
     d.text((16, 2), s.minute_str, font=f_sb, fill=0)
@@ -304,7 +349,6 @@ def render(image: Image.Image, s: Snapshot) -> None:
 
     d.line((0, SB_H, W, SB_H), fill=0, width=1)
 
-    # ── 主体 ──
     d.text((3, 26), s.ip, font=f_xl, fill=0)
     d.text((3, 51), f'{s.hostname}  ·  运行 {s.uptime_str}', font=f_cn, fill=0)
 
@@ -340,6 +384,9 @@ def render(image: Image.Image, s: Snapshot) -> None:
     d.text((16, row_y[2]),
            f'磁盘 {disk_pct:.0f}%  ({s.used_gb:.1f}/{s.total_gb:.0f}G)',
            font=f_cn, fill=0)
+
+    if s.tap_trigger:
+        draw_tap_badge(d, W, H, s.tap_trigger)
 
 
 # ─── 屏幕控制器 ─────────────────────────────────────
@@ -396,7 +443,29 @@ class ScreenController:
             pass
 
 
-# ─── 后台轮询线程 ──────────────────────────────────
+# ─── 后台线程 ──────────────────────────────────────
+
+def tap_listener(events: queue.Queue) -> None:
+    """单独的 PiSugar TCP 长连接，专门读 tap 事件（lib v0.1.1 的事件回调有 newline 比对 bug，自己实现更稳）。"""
+    while True:
+        try:
+            s = socket.create_connection(PISUGAR_HOST, timeout=10)
+            s.settimeout(None)
+            try:
+                f = s.makefile('rb')
+                while True:
+                    line = f.readline()
+                    if not line:
+                        break
+                    msg = line.decode(errors='replace').strip()
+                    if msg in ('single', 'double', 'long'):
+                        events.put(('tap', msg))
+            finally:
+                s.close()
+        except Exception as e:
+            print(f'[tap_listener] reconnect after error: {e}', flush=True)
+        time.sleep(TAP_RECONNECT_DELAY_SEC)
+
 
 def poll_loop(events: queue.Queue, ctrl: ScreenController) -> None:
     while True:
@@ -419,31 +488,38 @@ def main() -> int:
     ctrl = ScreenController()
     events: queue.Queue = queue.Queue()
 
-    # 注册 PiSugar tap 回调
-    ps = get_pisugar()
-    for kind in ('single', 'double', 'long'):
-        getattr(ps, f'register_{kind}_tap_handler')(
-            (lambda k=kind: events.put(('tap', k)))
-        )
-
-    # 首次全刷
     s0 = take_snapshot()
     ctrl.refresh(s0, 'startup')
 
+    threading.Thread(target=tap_listener, args=(events,), daemon=True).start()
     threading.Thread(target=poll_loop, args=(events, ctrl), daemon=True).start()
+
+    last_tap: tuple[str, float] | None = None  # (kind, expires_at)
 
     try:
         while True:
             kind, payload = events.get()
-            # 去抖：吸收已堆积的相同事件
             while True:
                 try:
                     events.get_nowait()
                 except queue.Empty:
                     break
 
+            now = time.time()
+
+            if kind == 'tap':
+                last_tap = (payload, now + TAP_BADGE_LINGER_SEC)
+                ns = take_snapshot(tap_trigger=payload)
+                ctrl.refresh(ns, f'tap:{payload}')
+                continue
+
+            # poll / safety：取快照，如果近期有 tap 仍在 linger 期内就保留 badge
             ns = payload if isinstance(payload, Snapshot) else take_snapshot()
-            ctrl.refresh(ns, kind if not isinstance(payload, str) else f'{kind}:{payload}')
+            if last_tap and now < last_tap[1]:
+                ns.tap_trigger = last_tap[0]
+            else:
+                last_tap = None
+            ctrl.refresh(ns, kind)
     except KeyboardInterrupt:
         pass
     finally:
