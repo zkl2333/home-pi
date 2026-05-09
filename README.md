@@ -1,96 +1,88 @@
-# Raspberry Pi 开发工作区
+# home-pi
 
-本地开发目录，对应远端设备 `pi@192.168.31.35`。整套配置可重现：在新 Pi 上 `git clone` 后跑 `bootstrap.sh` 即可恢复到当前状态。
+个人 Raspberry Pi 工作区——一台 **Pi Zero 2 W + PiSugar 3 + Waveshare 2.13" V3 墨水屏**，把它玩成一个常亮的状态显示小站。
 
-## 设备信息
+整套配置可重现：在新 Pi 上 `git clone` 后跑 [`bootstrap.sh`](bootstrap.sh) 即可恢复到当前状态。
+
+## 当前显示
+
+```
+🕐 21:14         📶 -50dBm           🔋 79% +
+─────────────────────────────────────────────
+192.168.31.35
+zero2w · 运行 1时02分           ⚡ 3.86V
+─────
+🌡 温度 45°C        ⚙ 负载 0.05
+▦ 内存 65% (272/427M)
+⬢ 磁盘  7% (1.8/29G)              ┌──┐
+                                    │单击│  ← 按按钮反馈
+                                    └──┘
+```
+
+事件驱动刷新：按按钮立即响应，状态变化时自动刷，**~0.7 秒局刷**。
+
+## 设备
 
 | 项 | 值 |
 |---|---|
-| 型号 | Raspberry Pi Zero 2 W Rev 1.0（4 核 ARMv7 / 512MB RAM） |
+| 型号 | Raspberry Pi Zero 2 W Rev 1.0（4 核 ARMv7 / 512MB） |
 | 系统 | Raspbian 11 (bullseye)，内核 6.1.21-v7+ |
-| 主机名 | `zero2w` |
-| 用户 | `pi` |
-| IP | `192.168.31.35`（WiFi / wlan0，DHCP） |
-| 配件 | PiSugar 3 电池板、Waveshare 2.13" V3 e-Paper 墨水屏 |
+| 主机名 / IP | `zero2w` / `192.168.31.35`（DHCP / WiFi） |
+| 电源 | PiSugar 3（含 RTC，已接入内核） |
+| 屏幕 | Waveshare 2.13" V3 e-Paper（250×122，黑白） |
 
 ## 目录结构
 
 ```
-pi/
-├── README.md
-├── .gitignore
-├── bootstrap.sh                # 在 Pi 上一键复盘入口
-├── projects/                   # 自己的项目（每个含 install.sh 即被 bootstrap 自动装）
+home-pi/
+├── bootstrap.sh                # 在新 Pi 上一键复盘
+├── projects/
 │   └── eink-status/            # 墨水屏状态显示 daemon
-├── pi-scripts/                 # 部署到 Pi 上由 cron / systemd 调用的脚本
-│   └── sync-github-keys.sh     # 定时拉 GitHub 公钥
-├── pi-config/                  # Pi 系统侧配置快照（被 bootstrap 同步）
-│   ├── etc/rc.local
-│   └── pi-crontab.txt
-├── scripts/                    # 本机开发工具（不部署）
+├── pi-scripts/
+│   └── sync-github-keys.sh     # 从 GitHub API 同步公钥
+├── pi-config/                  # 系统侧配置快照（rc.local 等）
+├── scripts/                    # 本机开发工具（不部署到 Pi）
 │   ├── pi.sh                   # 一键 ssh
-│   └── deploy.sh               # rsync 单个项目到 Pi
-└── upstream/                   # gitignored — bootstrap.sh 会按需 git clone
-    ├── e-Paper/                # waveshareteam/e-Paper
-    ├── PiSugar/
-    ├── pisugar-power-manager-rs/
-    └── sugar-wifi-conf/
+│   └── deploy.sh               # tar | ssh tar 推项目到 Pi
+└── upstream/                   # gitignored — bootstrap 按需 git clone
 ```
 
-## 快速使用
-
-### 在已配置好的 Pi 上日常使用
+## 日常使用
 
 ```bash
-ssh pi@192.168.31.35                            # 1Password / GitHub key 免密
-bash scripts/deploy.sh eink-status              # 推送项目改动到 Pi
-ssh pi@192.168.31.35 'sudo systemctl restart eink-status'
-ssh pi@192.168.31.35 'journalctl -u eink-status -e -f'
+bash scripts/pi.sh                                  # ssh 进 Pi
+bash scripts/deploy.sh eink-status --restart       # 推项目改动并重启服务
+bash scripts/pi.sh "journalctl -u eink-status -e -f"  # 看实时日志
 ```
 
-### 在新 Pi（或重做 SD 卡）上恢复
+## 在新 Pi（或重做 SD 卡）上恢复
 
 ```bash
-# 在 Pi 上：
-git clone <this-repo> ~/dev/pi
+git clone https://github.com/zkl2333/home-pi ~/dev/pi
 cd ~/dev/pi
 bash bootstrap.sh
 ```
 
-`bootstrap.sh` 会做的事（幂等）：
-1. apt 装：python3-pil/numpy/spidev/rpi.gpio、fonts-wqy-microhei、git、curl
-2. 启用 SPI / I2C（raspi-config）
-3. 拉取 Waveshare e-Paper SDK 到 `~/e-Paper`
-4. 装 PiSugar power-manager（含 systemd 服务）
-5. 部署 `~/.ssh/sync-github-keys.sh` 并装 crontab（开机 + 每小时同步 GitHub 公钥）
-6. 同步 `/etc/rc.local`
-7. 把 `projects/*` 拷到 `~/projects/` 并跑各自的 `install.sh`
+幂等。详细做了哪些事看 [`bootstrap.sh`](bootstrap.sh)，覆盖：apt 依赖、SPI/I2C、e-Paper SDK、PiSugar 套件、sugar-wifi-conf BLE 配 WiFi、SSH 公钥同步 cron、内核 RTC、systemd 服务安装。
 
-## 服务一览（Pi 上常驻）
+## Pi 上常驻服务
 
-| 端口 / 单元 | 内容 |
+| 单元 | 内容 |
 |---|---|
-| `:22` sshd | SSH（authorized_keys 由 cron 从 GitHub 同步）|
-| `:8421/8422/8423` pisugar-server | PiSugar HTTP / WebSocket / TCP |
-| `sugar-wifi-config.service` | 蓝牙配 WiFi（PiSugar APP / 微信小程序 / web-bluetooth 连接）|
-| `eink-status.service` | 墨水屏状态显示 daemon（事件驱动）|
+| `sshd` | SSH（authorized_keys 由 cron 从 GitHub API 同步）|
+| `pisugar-server` | PiSugar 3 状态服务（HTTP 8421 / WS 8422 / TCP 8423）|
+| `sugar-wifi-config` | 蓝牙配 WiFi（PiSugar APP / 微信小程序 / web-bluetooth 都可连）|
+| `eink-status` | 墨水屏状态显示 daemon（事件驱动）|
 
-PiSugar 配置项 `auto_rtc_sync = true`（bootstrap 会 patch）：开机自动从 RTC 读时间到系统、关机前从系统写回 RTC，断网时也能保留正确时间。
-
-## SSH 公钥管理（GitHub 单一可信源）
+## SSH 公钥管理
 
 Pi 上 cron 任务每小时和每次开机时从 `https://api.github.com/users/zkl2333/keys` 拉取，
-覆盖写入 `/home/pi/.ssh/authorized_keys`——**GitHub 上增删公钥，Pi 自动跟随**。
+覆盖写入 `~/.ssh/authorized_keys`——**GitHub 上增删公钥，Pi 自动跟随**。
 
-- 脚本：[`pi-scripts/sync-github-keys.sh`](pi-scripts/sync-github-keys.sh)（部署到 `~/.ssh/sync-github-keys.sh`）
-- 走 API 而非 `https://github.com/<user>.keys`，因为 Pi 当前网络对 github.com:443 直连超时；api.github.com 走 Cloudflare，IP 段未被屏蔽。
-- 日志：`journalctl -t github-keys` 或 `grep github-keys /var/log/syslog`
-- 手动触发：`~/.ssh/sync-github-keys.sh`
+走 API 而非 `https://github.com/<user>.keys`，因为 Pi 当前网络对 github.com:443 直连超时，api.github.com 走 Cloudflare 不被屏蔽。
 
-> ⚠️ 如果你在 GitHub 上把所有公钥删了，下次同步后 Pi 只能靠密码登录。
+> ⚠️ 在 GitHub 上把所有公钥删了 → 下次同步后 Pi 只能靠密码登录。
 
 ## 项目
 
-### eink-status
-
-墨水屏状态显示 daemon，事件驱动（PiSugar tap 事件 + 10s 轮询）。详见 [`projects/eink-status/README.md`](projects/eink-status/README.md)。
+- [eink-status](projects/eink-status) — 墨水屏状态显示 daemon
