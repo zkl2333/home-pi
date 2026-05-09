@@ -72,6 +72,7 @@ bash bootstrap.sh
 |---|---|
 | `:22` sshd | SSH（authorized_keys 由 cron 从 GitHub 同步）|
 | `:8421/8422/8423` pisugar-server | PiSugar HTTP / WebSocket / TCP |
+| `sugar-wifi-config.service` | 蓝牙配 WiFi（PiSugar APP / 微信小程序 / web-bluetooth 连接）|
 | `eink-status.service` | 墨水屏状态显示 daemon（事件驱动）|
 
 PiSugar 配置项 `auto_rtc_sync = true`（bootstrap 会 patch）：开机自动从 RTC 读时间到系统、关机前从系统写回 RTC，断网时也能保留正确时间。

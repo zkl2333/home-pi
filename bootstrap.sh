@@ -47,6 +47,15 @@ else
   echo "pisugar-server 已存在，跳过"
 fi
 
+log "安装 sugar-wifi-conf（蓝牙配 WiFi，PiSugar APP / 微信小程序连接用）"
+if ! systemctl is-enabled --quiet sugar-wifi-config 2>/dev/null; then
+  curl -fsSL https://repo.pisugar.uk/PiSugar/sugar-wifi-conf/raw/master/install-bin.sh -o /tmp/swc-install.sh
+  sudo bash /tmp/swc-install.sh
+  rm -f /tmp/swc-install.sh
+else
+  echo "sugar-wifi-config.service 已存在，跳过"
+fi
+
 log "PiSugar 配置 patch：开启 RTC ↔ 系统时间自动同步（pisugar-server 层）"
 sudo apt-get install -y jq >/dev/null
 PI_CFG=/etc/pisugar-server/config.json
