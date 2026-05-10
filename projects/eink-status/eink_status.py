@@ -29,17 +29,20 @@ from screen import ScreenController
 POLL_INTERVAL = 10.0
 SAFETY_REFRESH_MAX_AGE_SEC = 600
 TAP_RECONNECT_DELAY_SEC = 5
+TAP_READ_TIMEOUT_SEC = 90  # pisugar-server 死锁时能自动重连，不永久挂死
 
 
 # ─── 后台线程 ──────────────────────────────────────
 
 def tap_listener(events: queue.Queue) -> None:
     """单独的 PiSugar TCP 长连接，专门读 tap 事件
-    （lib v0.1.1 的事件回调有 newline 比对 bug，自己实现更稳）。"""
+    （lib v0.1.1 的事件回调有 newline 比对 bug，自己实现更稳）。
+    读超时 TAP_READ_TIMEOUT_SEC：pisugar-server 僵死时不会永久阻塞，
+    超时后走重连逻辑，server 重启后自愈。"""
     while True:
         try:
             s = socket.create_connection(PISUGAR_HOST, timeout=10)
-            s.settimeout(None)
+            s.settimeout(TAP_READ_TIMEOUT_SEC)
             try:
                 f = s.makefile('rb')
                 while True:

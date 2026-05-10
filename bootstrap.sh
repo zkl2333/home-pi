@@ -56,7 +56,8 @@ sudo apt-get update -y
 sudo apt-get install -y \
     git curl wget \
     python3-pip python3-pil python3-numpy python3-spidev python3-rpi.gpio \
-    fonts-wqy-microhei
+    fonts-wqy-microhei \
+    i2c-tools
 
 
 # ─── 2. 启用 SPI / I2C ────────────────────────────
@@ -73,11 +74,32 @@ else
 fi
 
 # ─── 4. PiSugar 套件 ──────────────────────────────
-log "安装 PiSugar power-manager（如未装）"
-if ! systemctl is-enabled --quiet pisugar-server 2>/dev/null; then
-  curl -fsSL https://cdn.pisugar.com/release/pisugar-power-manager.sh | bash -s -- -c release
+# 锁定 2.3.2：1.7.x 系列存在 long-uptime accept-queue 死锁（上游 issue #131）；
+# 2.3.3 仅是 CI 改成 ARMv6 编译目标（适配 pi zero v1），对 Pi Zero 2 W (ARMv7) 反而更慢。
+PISUGAR_VER=2.3.2
+PISUGAR_ARCH=$(dpkg --print-architecture)
+log "安装/升级 PiSugar power-manager 到 ${PISUGAR_VER} (${PISUGAR_ARCH})"
+PISUGAR_CUR=""
+if command -v pisugar-server >/dev/null 2>&1; then
+  PISUGAR_CUR=$(pisugar-server --version 2>/dev/null | awk '{print $2}')
+fi
+if [ "$PISUGAR_CUR" = "$PISUGAR_VER" ]; then
+  echo "pisugar-server 已是 ${PISUGAR_VER}，跳过"
 else
-  echo "pisugar-server 已存在，跳过"
+  echo "当前 ${PISUGAR_CUR:-未装} → 升级到 ${PISUGAR_VER}"
+  PISUGAR_TMP=$(mktemp -d /tmp/pisugar-install.XXXXXX)
+  for pkg in pisugar-server pisugar-poweroff pisugar-programmer; do
+    wget -q -O "${PISUGAR_TMP}/${pkg}.deb" \
+      "http://cdn.pisugar.com/release/${pkg}_${PISUGAR_VER}-1_${PISUGAR_ARCH}.deb"
+  done
+  # 已知坑：旧版 server 死锁时 prerm 的 systemctl stop 会卡死，pkill -9 兜底
+  sudo systemctl stop pisugar-server 2>/dev/null || true
+  sleep 1
+  sudo pkill -9 -x pisugar-server 2>/dev/null || true
+  # --force-confold：保留我们自己的 /etc/pisugar-server/config.json（auth + auto_rtc_sync）
+  sudo dpkg --force-confold -i "${PISUGAR_TMP}"/*.deb
+  rm -rf "$PISUGAR_TMP"
+  sudo systemctl enable --now pisugar-server >/dev/null
 fi
 
 log "安装 sugar-wifi-conf（蓝牙配 WiFi，PiSugar APP / 微信小程序连接用）"
