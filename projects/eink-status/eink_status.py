@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,13 @@ TAP_RECONNECT_DELAY_SEC = 5
 TAP_BADGE_LINGER_SEC = 5         # tap 反馈在屏幕上至少保留这么久
 
 TAP_LABELS = {'single': '单击', 'double': '双击', 'long': '长按'}
+
+# 外部数据源（可被环境变量覆写）
+WEATHER_URL = os.environ.get('EINK_WEATHER_URL', 'https://wttr.in/?format=j1&lang=zh')
+WEATHER_INTERVAL = int(os.environ.get('EINK_WEATHER_INTERVAL', '1800'))   # 30 min
+NEWS_URL = os.environ.get('EINK_NEWS_URL', 'https://60s-api.viki.moe/v2/60s')
+NEWS_INTERVAL = int(os.environ.get('EINK_NEWS_INTERVAL', '3600'))         # 1 h
+FETCH_TIMEOUT = 10.0
 
 
 # ─── PiSugar 命令通道 ──────────────────────────────
@@ -93,6 +101,7 @@ def _safe_float(s: str | None) -> float | None:
 class Snapshot:
     ts: float
     minute_str: str
+    date_str: str
     ip: str
     hostname: str
     battery_pct: int | None
@@ -203,6 +212,7 @@ def take_snapshot(tap_trigger: str | None = None) -> Snapshot:
     return Snapshot(
         ts=time.time(),
         minute_str=now.strftime('%H:%M'),
+        date_str=now.strftime('%m-%d'),
         ip=get_ip(),
         hostname=socket.gethostname(),
         battery_pct=int(battery_raw) if battery_raw is not None else None,
@@ -226,7 +236,7 @@ def take_snapshot(tap_trigger: str | None = None) -> Snapshot:
 
 def _key_tuple(s: Snapshot) -> tuple:
     bat_lvl = (s.battery_pct // 5) if s.battery_pct is not None else None
-    return (s.minute_str, s.ip, bat_lvl, s.charging, s.plugged)
+    return (s.minute_str, s.ip, bat_lvl, s.charging, s.plugged, s.rssi_bars)
 
 
 def changed_significantly(a: Snapshot | None, b: Snapshot) -> bool:
@@ -325,30 +335,40 @@ CONTENT_Y0 = SB_H + PAGE_TITLE_H + 2
 
 
 def render_status_bar(d, W: int, s: Snapshot) -> None:
-    """所有页面共享的顶部状态栏：时钟 / WiFi / 电池。"""
-    f_sb = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 13)
-    icon_clock(d, 2, 6)
-    d.text((16, 2), s.minute_str, font=f_sb, fill=0)
+    """顶部状态栏：左 时钟+时间 / 中 WiFi格 / 右 电池+%。dBm 移除给视觉减负。"""
+    f_time = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 14)
+    f_pct = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 13)
 
+    # 左：时钟 + 时间（垂直居中于 22px 状态栏）
+    icon_clock(d, 4, 6)
+    d.text((18, 1), s.minute_str, font=f_time, fill=0)
+
+    # 右：电量百分比 + 电池图标（紧贴右边）
     bat_lbl = f'{s.battery_pct}%' if s.battery_pct is not None else '?'
     if s.charging:
         bat_lbl += '+'
-    pct_w = int(d.textlength(bat_lbl, font=f_sb))
+    pct_w = int(d.textlength(bat_lbl, font=f_pct))
     icon_w, icon_h = 22, 10
     icon_x = W - 6 - icon_w
-    d.text((icon_x - 4 - pct_w, 2), bat_lbl, font=f_sb, fill=0)
-    draw_battery_icon(d, icon_x, (SB_H - icon_h) // 2 - 1, icon_w, icon_h,
-                      s.battery_raw)
+    icon_y = (SB_H - icon_h) // 2 - 1
+    pct_x = icon_x - 4 - pct_w
+    d.text((pct_x, 3), bat_lbl, font=f_pct, fill=0)
+    draw_battery_icon(d, icon_x, icon_y, icon_w, icon_h, s.battery_raw)
 
-    wifi_x = 70
-    wifi_x = draw_wifi_icon(d, wifi_x, 5, s.rssi_bars)
-    rssi_lbl = f' {s.rssi}dBm' if s.rssi is not None else ' --'
-    d.text((wifi_x, 2), rssi_lbl, font=f_sb, fill=0)
+    # 中右：WiFi 4 格（去掉 dBm 数字 — 信号强弱看格数足够）
+    wifi_w = 4 * 3
+    wifi_x = pct_x - 8 - wifi_w
+    draw_wifi_icon(d, wifi_x, 6, s.rssi_bars)
+
+    # 底部细分隔
+    d.line((0, SB_H, W, SB_H), fill=0, width=1)
 
 
-def render_page_title(d, W: int, idx: int, total: int, name: str) -> None:
-    """页指示：● ○ ○ + 页名，下方分割线。"""
+def render_page_title(d, W: int, idx: int, total: int, name: str,
+                      date_str: str = '') -> None:
+    """页指示条：左 ●○○ + 页名 / 右 日期，下方分隔线。"""
     f = ImageFont.truetype(FONT_CJK, 12)
+    f_date = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 11)
     r = 3
     gap = 5
     dx = 4
@@ -359,7 +379,12 @@ def render_page_title(d, W: int, idx: int, total: int, name: str) -> None:
         else:
             d.ellipse((dx, dy, dx + r * 2, dy + r * 2), outline=0, width=1)
         dx += r * 2 + gap
-    d.text((dx + 2, SB_H), name, font=f, fill=0)
+    d.text((dx + 4, SB_H), name, font=f, fill=0)
+
+    if date_str:
+        dw = int(d.textlength(date_str, font=f_date))
+        d.text((W - 6 - dw, SB_H + 1), date_str, font=f_date, fill=0)
+
     y_div = SB_H + PAGE_TITLE_H
     d.line((0, y_div, W, y_div), fill=0, width=1)
 
@@ -483,11 +508,182 @@ def render_power(d, image: Image.Image, s: Snapshot) -> None:
         d.text((col2_x + 30, y), f'{ma:+.0f}mA', font=f_val, fill=0)
 
 
+# ─── 外部数据获取（天气 / 新闻） ──────────────────
+
+class Fetcher:
+    """通用周期性 GET 数据源：自动重试、缓存最近一次成功结果。"""
+
+    def __init__(self, name: str, url: str, interval: int,
+                 parser, timeout: float = FETCH_TIMEOUT):
+        self.name = name
+        self.url = url
+        self.interval = interval
+        self.parser = parser
+        self.timeout = timeout
+        self._lock = threading.Lock()
+        self._data = None
+        self._last_ok = 0.0
+        self._last_err = ''
+
+    def start(self) -> None:
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self) -> None:
+        while True:
+            try:
+                req = urllib.request.Request(
+                    self.url,
+                    headers={'User-Agent': 'eink-status/1.0'},
+                )
+                with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                    body = r.read()
+                parsed = self.parser(body)
+                with self._lock:
+                    self._data = parsed
+                    self._last_ok = time.time()
+                    self._last_err = ''
+                print(f'[fetch:{self.name}] ok', flush=True)
+            except Exception as e:
+                with self._lock:
+                    self._last_err = str(e)[:80]
+                print(f'[fetch:{self.name}] err: {e}', flush=True)
+            time.sleep(self.interval)
+
+    def get(self) -> tuple[object, float, str]:
+        with self._lock:
+            return self._data, self._last_ok, self._last_err
+
+
+def parse_wttr(body: bytes) -> dict:
+    j = json.loads(body)
+    cur = j['current_condition'][0]
+    today = j['weather'][0]
+    area = ''
+    try:
+        area = j['nearest_area'][0]['areaName'][0]['value']
+    except (KeyError, IndexError):
+        pass
+    desc = ''
+    try:
+        desc = cur['lang_zh'][0]['value']
+    except (KeyError, IndexError):
+        try:
+            desc = cur['weatherDesc'][0]['value']
+        except (KeyError, IndexError):
+            desc = '?'
+    return {
+        'city': area or '?',
+        'cond': desc,
+        'temp_c': cur.get('temp_C', '?'),
+        'feels_c': cur.get('FeelsLikeC', '?'),
+        'humidity': cur.get('humidity', '?'),
+        'high_c': today.get('maxtempC', '?'),
+        'low_c': today.get('mintempC', '?'),
+    }
+
+
+def parse_60s(body: bytes) -> dict:
+    j = json.loads(body)
+    if j.get('code') not in (200, '200'):
+        raise ValueError(f"60s api: {j.get('message', '?')}")
+    data = j.get('data', {})
+    return {
+        'date': data.get('date', ''),
+        'news': data.get('news', []) or [],
+    }
+
+
+# 全局 fetcher 句柄，main() 中初始化；render 函数读取
+weather_fetcher: 'Fetcher | None' = None
+news_fetcher: 'Fetcher | None' = None
+
+
+def _draw_fetch_placeholder(d, W: int, H: int, label: str,
+                            err: str = '') -> None:
+    f = ImageFont.truetype(FONT_CJK, 13)
+    f_sm = ImageFont.truetype(FONT_CJK, 11)
+    d.text((6, CONTENT_Y0 + 14), f'正在获取{label}…', font=f, fill=0)
+    if err:
+        d.text((6, CONTENT_Y0 + 38), f'错误：{err[:32]}', font=f_sm, fill=0)
+
+
+def render_weather(d, image: Image.Image, s: Snapshot) -> None:
+    """天气页：城市/状况 + 大字温度 + 高低体感湿度。"""
+    W, H = image.size
+    if weather_fetcher is None:
+        _draw_fetch_placeholder(d, W, H, '天气')
+        return
+    data, last_ok, err = weather_fetcher.get()
+    if not data:
+        _draw_fetch_placeholder(d, W, H, '天气', err)
+        return
+
+    f_cn = ImageFont.truetype(FONT_CJK, 14)
+    f_cn_sm = ImageFont.truetype(FONT_CJK, 11)
+    f_xxl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 32)
+    f_mono = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 10)
+
+    # 大字温度（右）
+    temp = f"{data['temp_c']}°"
+    tw = int(d.textlength(temp, font=f_xxl))
+    d.text((W - tw - 6, CONTENT_Y0), temp, font=f_xxl, fill=0)
+
+    # 城市 + 状况（左）
+    d.text((6, CONTENT_Y0 + 4), data['city'], font=f_cn, fill=0)
+    d.text((6, CONTENT_Y0 + 26), data['cond'], font=f_cn, fill=0)
+
+    # 底部细节条
+    y2 = CONTENT_Y0 + 50
+    d.line((6, y2, W - 6, y2), fill=0, width=1)
+    detail = (f"高{data['high_c']}° 低{data['low_c']}°  "
+              f"体感{data['feels_c']}°  湿{data['humidity']}%")
+    d.text((6, y2 + 4), detail, font=f_cn_sm, fill=0)
+
+    # 数据更新时间 (右下角)
+    if last_ok:
+        fresh = datetime.fromtimestamp(last_ok).strftime('%H:%M')
+        fw = int(d.textlength(fresh, font=f_mono))
+        d.text((W - fw - 6, H - 12), fresh, font=f_mono, fill=0)
+
+
+def render_news(d, image: Image.Image, s: Snapshot) -> None:
+    """新闻页：60 秒看世界，5 条头条（按字符截断）。"""
+    W, H = image.size
+    if news_fetcher is None:
+        _draw_fetch_placeholder(d, W, H, '新闻')
+        return
+    data, last_ok, err = news_fetcher.get()
+    if not data:
+        _draw_fetch_placeholder(d, W, H, '新闻', err)
+        return
+
+    f_label = ImageFont.truetype(FONT_CJK, 11)
+    f_news = ImageFont.truetype(FONT_CJK, 11)
+
+    y = CONTENT_Y0
+    header = '60秒看世界'
+    if data.get('date'):
+        header += f"  ·  {data['date']}"
+    d.text((6, y), header, font=f_label, fill=0)
+    y += 14
+
+    items = data.get('news', [])[:5]
+    for i, item in enumerate(items, 1):
+        text = item.strip().replace('\n', ' ')
+        truncated = text if len(text) <= 22 else text[:21] + '…'
+        d.text((6, y), f'{i}. {truncated}', font=f_news, fill=0)
+        y += 13
+        if y > H - 12:
+            break
+
+
 # 页面注册表：按顺序循环，long-press 回到第 0 页
 PAGES: list[tuple[str, callable]] = [
     ('概览', render_overview),
     ('系统', render_system),
     ('电源', render_power),
+    ('天气', render_weather),
+    ('新闻', render_news),
 ]
 
 
@@ -496,7 +692,7 @@ def render(image: Image.Image, s: Snapshot, page_idx: int) -> None:
     W, H = image.size
     render_status_bar(d, W, s)
     name, page_fn = PAGES[page_idx]
-    render_page_title(d, W, page_idx, len(PAGES), name)
+    render_page_title(d, W, page_idx, len(PAGES), name, s.date_str)
     page_fn(d, image, s)
     if s.tap_trigger:
         draw_tap_badge(d, W, H, s.tap_trigger)
@@ -599,8 +795,16 @@ def poll_loop(events: queue.Queue, ctrl: ScreenController) -> None:
 # ─── 主循环 ────────────────────────────────────────
 
 def main() -> int:
+    global weather_fetcher, news_fetcher
+
     ctrl = ScreenController()
     events: queue.Queue = queue.Queue()
+
+    # 提前启动外部数据获取，让初始 render 之前就开始 warm cache
+    weather_fetcher = Fetcher('weather', WEATHER_URL, WEATHER_INTERVAL, parse_wttr)
+    weather_fetcher.start()
+    news_fetcher = Fetcher('news', NEWS_URL, NEWS_INTERVAL, parse_60s)
+    news_fetcher.start()
 
     s0 = take_snapshot()
     ctrl.refresh(s0, 'startup')
