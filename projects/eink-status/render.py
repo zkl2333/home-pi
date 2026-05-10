@@ -7,7 +7,8 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import date, datetime
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -20,8 +21,6 @@ FONT_CJK = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'
 SB_H = 22                    # 顶部状态栏高度
 PAGE_TITLE_H = 14            # 页标题条高度
 CONTENT_Y0 = SB_H + PAGE_TITLE_H + 2
-
-TAP_LABELS = {'single': '单击', 'double': '双击', 'long': '长按'}
 
 
 # ─── Icon ──────────────────────────────────────────
@@ -90,20 +89,6 @@ def draw_wifi_icon(d, x, y, bars):
         else:
             d.rectangle((bx, by_top, bx + bar_w, y + 10), outline=0, width=1)
     return x + 4 * (bar_w + gap)
-
-
-def draw_tap_badge(d, W, H, kind: str):
-    """右下角反白圆角矩形显示按键反馈，下次刷新自然消失。"""
-    label = TAP_LABELS.get(kind, kind)
-    f = ImageFont.truetype(FONT_CJK, 11)
-    pad_x, pad_y = 4, 1
-    tw = int(d.textlength(label, font=f))
-    bw = tw + pad_x * 2
-    bh = 14
-    bx2, by2 = W - 2, H - 2
-    bx1, by1 = bx2 - bw, by2 - bh
-    d.rectangle((bx1, by1, bx2, by2), fill=0)
-    d.text((bx1 + pad_x, by1 + pad_y - 1), label, font=f, fill=255)
 
 
 # ─── 状态栏 / 页标题 ───────────────────────────────
@@ -361,12 +346,67 @@ def render_news(d, image: Image.Image, s: Snapshot) -> None:
             break
 
 
+def render_calendar(d, image: Image.Image, s: Snapshot) -> None:
+    """日历页：年月头 + 当月迷你网格，今天反白高亮。
+
+    周一为周首（中文习惯）；6 周月份末行可能轻微贴底，可接受。
+    """
+    W, H = image.size
+    today = date.fromtimestamp(s.ts)
+    cal = calendar.monthcalendar(today.year, today.month)
+
+    f_h = ImageFont.truetype(FONT_CJK, 12)
+    f_wd = ImageFont.truetype(FONT_CJK, 10)
+    f_d = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 10)
+    f_d_b = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 10)
+
+    # 头部：年月（左）+ 今天（右）
+    y = CONTENT_Y0
+    d.text((6, y), f'{today.year}年 {today.month}月', font=f_h, fill=0)
+    weekday_cn = '一二三四五六日'[today.weekday()]
+    today_str = f'今 {today.day}日 周{weekday_cn}'
+    tw = int(d.textlength(today_str, font=f_h))
+    d.text((W - 6 - tw, y), today_str, font=f_h, fill=0)
+    y += 14
+
+    # 星期表头
+    margin = 4
+    cell_w = (W - 2 * margin) / 7
+    for i, lb in enumerate('一二三四五六日'):
+        cx = int(margin + i * cell_w + cell_w / 2)
+        lw = int(d.textlength(lb, font=f_wd))
+        d.text((cx - lw // 2, y), lb, font=f_wd, fill=0)
+    y += 11
+
+    # 日历网格
+    cell_h = 10
+    for row_idx, week in enumerate(cal):
+        cy = y + row_idx * cell_h
+        for col_idx, day in enumerate(week):
+            if day == 0:
+                continue
+            cx = int(margin + col_idx * cell_w + cell_w / 2)
+            day_str = str(day)
+            is_today = (day == today.day)
+            font_use = f_d_b if is_today else f_d
+            dw = int(d.textlength(day_str, font=font_use))
+
+            if is_today:
+                rx1 = int(margin + col_idx * cell_w + 2)
+                rx2 = int(margin + (col_idx + 1) * cell_w - 2)
+                d.rectangle((rx1, cy - 1, rx2, cy + cell_h - 1), fill=0)
+                d.text((cx - dw // 2, cy - 1), day_str, font=font_use, fill=255)
+            else:
+                d.text((cx - dw // 2, cy - 1), day_str, font=f_d, fill=0)
+
+
 # ─── 页面注册表 + 主 render ─────────────────────────
 
 PAGES: list[tuple[str, callable]] = [
     ('概览', render_overview),
     ('系统', render_system),
     ('电源', render_power),
+    ('日历', render_calendar),
     ('天气', render_weather),
     ('新闻', render_news),
 ]
@@ -379,5 +419,3 @@ def render(image: Image.Image, s: Snapshot, page_idx: int) -> None:
     name, page_fn = PAGES[page_idx]
     render_page_title(d, W, page_idx, len(PAGES), name, s.date_str)
     page_fn(d, image, s)
-    if s.tap_trigger:
-        draw_tap_badge(d, W, H, s.tap_trigger)

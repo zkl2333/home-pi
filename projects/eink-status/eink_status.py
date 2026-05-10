@@ -29,7 +29,6 @@ from screen import ScreenController
 POLL_INTERVAL = 10.0
 SAFETY_REFRESH_MAX_AGE_SEC = 600
 TAP_RECONNECT_DELAY_SEC = 5
-TAP_BADGE_LINGER_SEC = 5         # tap 反馈在屏幕上至少保留这么久
 
 
 # ─── 后台线程 ──────────────────────────────────────
@@ -87,8 +86,6 @@ def main() -> int:
     threading.Thread(target=tap_listener, args=(events,), daemon=True).start()
     threading.Thread(target=poll_loop, args=(events, ctrl), daemon=True).start()
 
-    last_tap: tuple[str, float] | None = None  # (kind, expires_at)
-
     try:
         while True:
             kind, payload = events.get()
@@ -99,8 +96,6 @@ def main() -> int:
                 except queue.Empty:
                     break
 
-            now = time.time()
-
             if kind == 'tap':
                 # 单击下一页、双击上一页、长按回首页
                 if payload == 'single':
@@ -109,17 +104,10 @@ def main() -> int:
                     ctrl.current_page = (ctrl.current_page - 1) % len(PAGES)
                 elif payload == 'long':
                     ctrl.current_page = 0
-                last_tap = (payload, now + TAP_BADGE_LINGER_SEC)
-                ns = take_snapshot(tap_trigger=payload)
-                ctrl.refresh(ns, f'tap:{payload}:p{ctrl.current_page}')
+                ctrl.refresh(take_snapshot(), f'tap:{payload}:p{ctrl.current_page}')
                 continue
 
-            # poll / safety：取快照，如果近期有 tap 仍在 linger 期内就保留 badge
             ns = payload if isinstance(payload, Snapshot) else take_snapshot()
-            if last_tap and now < last_tap[1]:
-                ns.tap_trigger = last_tap[0]
-            else:
-                last_tap = None
             ctrl.refresh(ns, kind)
     except KeyboardInterrupt:
         pass

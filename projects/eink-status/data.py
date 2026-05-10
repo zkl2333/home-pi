@@ -155,10 +155,9 @@ class Snapshot:
     used_gb: float
     total_gb: float
     uptime_str: str
-    tap_trigger: str | None = None   # 本次刷新若由按键触发，记录类型
 
 
-def take_snapshot(tap_trigger: str | None = None) -> Snapshot:
+def take_snapshot() -> Snapshot:
     now = datetime.now()
     pi = query_pisugar([
         'get battery', 'get battery_v', 'get battery_i',
@@ -193,7 +192,6 @@ def take_snapshot(tap_trigger: str | None = None) -> Snapshot:
         used_gb=used_gb,
         total_gb=total_gb,
         uptime_str=get_uptime_str(),
-        tap_trigger=tap_trigger,
     )
 
 
