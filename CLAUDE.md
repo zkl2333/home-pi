@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库定位
 
-本地（Windows / git-bash）开发工作区，对应远端设备 `pi@192.168.31.35`（Raspberry Pi Zero 2 W，Raspbian 11，配 PiSugar 3 + Waveshare 2.13" V3 墨水屏）。**代码在本机编辑，运行环境只在 Pi 上**——本机没有 GPIO / SPI / `waveshare_epd` / `pisugar-server`，不要试图在 Windows 本地跑 `projects/eink-status/eink_status.py`。
+本地（Windows / git-bash）开发工作区，对应远端设备 `pi@zero2w.local`（IP 由路由器分配，会变；连接走 mDNS。Raspberry Pi Zero 2 W，Raspbian 11，配 PiSugar 3 + Waveshare 2.13" V3 墨水屏）。**代码在本机编辑，运行环境只在 Pi 上**——本机没有 GPIO / SPI / `waveshare_epd` / `pisugar-server`，不要试图在 Windows 本地跑 `projects/eink-status/eink_status.py`。
 
 整个仓库的承诺：在新 Pi 上 `git clone` + `bash bootstrap.sh` 即可完整复盘当前线上状态。改任何系统侧配置时，要同时改 `bootstrap.sh` 让它仍幂等。
 

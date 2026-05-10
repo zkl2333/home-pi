@@ -4,4 +4,4 @@ SSH="${SSH_BIN:-ssh}"
 if [ -z "${SSH_BIN:-}" ] && [ -x /c/Windows/System32/OpenSSH/ssh.exe ]; then
   SSH=/c/Windows/System32/OpenSSH/ssh.exe
 fi
-exec "$SSH" pi@192.168.31.35 "$@"
+exec "$SSH" -4 pi@zero2w.local "$@"
