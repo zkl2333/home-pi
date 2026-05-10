@@ -18,9 +18,8 @@ from data import Snapshot
 FONT_DEJAVU = '/usr/share/fonts/truetype/dejavu'
 FONT_CJK = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'
 
-SB_H = 18                    # 顶部状态栏高度（iPhone 风格更窄）
-PAGE_TITLE_H = 13            # 页标题条高度
-CONTENT_Y0 = SB_H + PAGE_TITLE_H + 1   # = 32，整体上移给内容多 6px
+SB_H = 22                    # 合并后的状态栏（含页指示 + 时间 + 信号电量）
+CONTENT_Y0 = SB_H + 2        # = 24，比之前再上移 8px
 
 
 # ─── Icon ──────────────────────────────────────────
@@ -63,8 +62,8 @@ def icon_bolt(d, x, y):
     d.polygon(pts, fill=0)
 
 
-def draw_battery_icon(d, x, y, w, h, level):
-    """iPhone 风格电池：圆角胶囊外壳 + 右侧小凸 + 内部填充。"""
+def draw_battery_icon(d, x, y, w, h, level, charging=False):
+    """iPhone 风格电池胶囊。charging=True 时画闪电（不画填充条），否则画填充条。"""
     r = max(1, h // 2 - 1)
     try:
         d.rounded_rectangle((x, y, x + w, y + h), radius=r, outline=0, width=1)
@@ -74,8 +73,23 @@ def draw_battery_icon(d, x, y, w, h, level):
     nub_h = max(3, h - 6)
     nub_y = y + (h - nub_h) // 2
     d.rectangle((x + w + 1, nub_y, x + w + 2, nub_y + nub_h), fill=0)
-    # 内填充
-    if level is not None and level > 0:
+
+    if charging:
+        # 居中画 5×8 的迷你闪电（iPhone 在电池里画 ⚡ 表示充电）
+        cx = x + w // 2
+        cy = y + h // 2
+        bx = cx - 2
+        by = cy - 4
+        pts = [
+            (bx + 3, by),
+            (bx, by + 4),
+            (bx + 2, by + 4),
+            (bx + 1, by + 8),
+            (bx + 4, by + 4),
+            (bx + 2, by + 4),
+        ]
+        d.polygon(pts, fill=0)
+    elif level is not None and level > 0:
         pad = 2
         inner_w = w - 2 * pad
         fw = max(1, int(inner_w * (level / 100)))
@@ -104,55 +118,53 @@ def draw_wifi_icon(d, x, y, bars):
 
 # ─── 状态栏 / 页标题 ───────────────────────────────
 
-def render_status_bar(d, W: int, s: Snapshot) -> None:
-    """iPhone 风格状态栏：左 时间 / 右 WiFi+电量+电池胶囊，无底部分隔线。"""
+def render_status_bar(d, W: int, s: Snapshot, page_idx: int = 0,
+                      page_total: int = 1, page_name: str = '') -> None:
+    """合并后的单行状态栏（22 px 高）：
+        [ 时间 ]  [ ●○○○○○ + 页名 ]              [ WiFi ] [ 电量% ] [ 电池 ]
+    所有元素严格按 22 px 行高居中，底部一根细分隔线。
+    """
     f_time = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 14)
     f_pct = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 12)
+    f_name = ImageFont.truetype(FONT_CJK, 12)
 
-    # 左：时间（iPhone 不带时钟图标，只显示加粗时间）
-    d.text((6, -1), s.minute_str, font=f_time, fill=0)
+    # ── 左：时间
+    time_str = s.minute_str
+    d.text((6, 4), time_str, font=f_time, fill=0)
+    time_w = int(d.textlength(time_str, font=f_time))
 
-    # 右：电池胶囊
+    # ── 右：电池胶囊 + 百分比（充电时百分比不再加 +，由电池里的闪电表达）
     bat_lbl = f'{s.battery_pct}%' if s.battery_pct is not None else '?'
-    if s.charging:
-        bat_lbl += '+'
     pct_w = int(d.textlength(bat_lbl, font=f_pct))
     icon_w, icon_h = 26, 12
     icon_x = W - 6 - icon_w
-    icon_y = (SB_H - icon_h) // 2
+    icon_y = (SB_H - icon_h) // 2          # = 5
     pct_x = icon_x - 3 - pct_w
-    d.text((pct_x, 1), bat_lbl, font=f_pct, fill=0)
-    draw_battery_icon(d, icon_x, icon_y, icon_w, icon_h, s.battery_raw)
+    d.text((pct_x, 5), bat_lbl, font=f_pct, fill=0)
+    draw_battery_icon(d, icon_x, icon_y, icon_w, icon_h,
+                      s.battery_raw, charging=s.charging)
 
-    # 右中：WiFi 4 格（紧贴电量百分比左侧）
+    # ── 右中：WiFi 4 格
     wifi_w = 4 * 3
-    wifi_x = pct_x - 5 - wifi_w
-    draw_wifi_icon(d, wifi_x, 4, s.rssi_bars)
+    wifi_x = pct_x - 6 - wifi_w
+    draw_wifi_icon(d, wifi_x, 6, s.rssi_bars)
 
-
-def render_page_title(d, W: int, idx: int, total: int, name: str,
-                      date_str: str = '') -> None:
-    """页指示条：左 ●○○ + 页名 / 右 日期，下方分隔线。"""
-    f = ImageFont.truetype(FONT_CJK, 12)
-    f_date = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 11)
+    # ── 中：●○○ 页指示 + 页名（在时间右侧、WiFi 左侧的留白里）
     r = 3
     gap = 5
-    dx = 4
-    dy = SB_H + (PAGE_TITLE_H - r * 2) // 2
-    for i in range(total):
-        if i == idx:
+    dx = 6 + time_w + 14
+    dy = (SB_H - r * 2) // 2               # = 8
+    for i in range(page_total):
+        if i == page_idx:
             d.ellipse((dx, dy, dx + r * 2, dy + r * 2), fill=0)
         else:
             d.ellipse((dx, dy, dx + r * 2, dy + r * 2), outline=0, width=1)
         dx += r * 2 + gap
-    d.text((dx + 4, SB_H), name, font=f, fill=0)
+    if page_name:
+        d.text((dx + 2, 5), page_name, font=f_name, fill=0)
 
-    if date_str:
-        dw = int(d.textlength(date_str, font=f_date))
-        d.text((W - 6 - dw, SB_H + 1), date_str, font=f_date, fill=0)
-
-    y_div = SB_H + PAGE_TITLE_H
-    d.line((0, y_div, W, y_div), fill=0, width=1)
+    # 底部分隔
+    d.line((0, SB_H, W, SB_H), fill=0, width=1)
 
 
 # ─── 各页 ──────────────────────────────────────────
@@ -422,8 +434,6 @@ PAGES: list[tuple[str, callable]] = [
 
 def render(image: Image.Image, s: Snapshot, page_idx: int) -> None:
     d = ImageDraw.Draw(image)
-    W, H = image.size
-    render_status_bar(d, W, s)
     name, page_fn = PAGES[page_idx]
-    render_page_title(d, W, page_idx, len(PAGES), name, s.date_str)
+    render_status_bar(d, image.size[0], s, page_idx, len(PAGES), name)
     page_fn(d, image, s)
