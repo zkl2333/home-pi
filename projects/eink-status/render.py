@@ -18,18 +18,12 @@ from data import Snapshot
 FONT_DEJAVU = '/usr/share/fonts/truetype/dejavu'
 FONT_CJK = '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'
 
-SB_H = 22                    # 顶部状态栏高度
-PAGE_TITLE_H = 14            # 页标题条高度
-CONTENT_Y0 = SB_H + PAGE_TITLE_H + 2
+SB_H = 18                    # 顶部状态栏高度（iPhone 风格更窄）
+PAGE_TITLE_H = 13            # 页标题条高度
+CONTENT_Y0 = SB_H + PAGE_TITLE_H + 1   # = 32，整体上移给内容多 6px
 
 
 # ─── Icon ──────────────────────────────────────────
-
-def icon_clock(d, x, y):
-    d.ellipse((x, y, x + 10, y + 10), outline=0, width=1)
-    d.line((x + 5, y + 5, x + 5, y + 2), fill=0)
-    d.line((x + 5, y + 5, x + 8, y + 5), fill=0)
-
 
 def icon_thermo(d, x, y):
     d.ellipse((x + 1, y + 7, x + 6, y + 12), outline=0, width=1)
@@ -70,12 +64,29 @@ def icon_bolt(d, x, y):
 
 
 def draw_battery_icon(d, x, y, w, h, level):
-    d.rectangle((x, y, x + w, y + h), outline=0, width=1)
-    nub_y = (h - 4) // 2
-    d.rectangle((x + w + 1, y + nub_y, x + w + 2, y + nub_y + 4), fill=0)
+    """iPhone 风格电池：圆角胶囊外壳 + 右侧小凸 + 内部填充。"""
+    r = max(1, h // 2 - 1)
+    try:
+        d.rounded_rectangle((x, y, x + w, y + h), radius=r, outline=0, width=1)
+    except (AttributeError, TypeError):
+        d.rectangle((x, y, x + w, y + h), outline=0, width=1)
+    # 右凸（电池正极小突起）
+    nub_h = max(3, h - 6)
+    nub_y = y + (h - nub_h) // 2
+    d.rectangle((x + w + 1, nub_y, x + w + 2, nub_y + nub_h), fill=0)
+    # 内填充
     if level is not None and level > 0:
-        fw = max(1, int((w - 2) * (level / 100)))
-        d.rectangle((x + 1, y + 1, x + 1 + fw, y + h - 1), fill=0)
+        pad = 2
+        inner_w = w - 2 * pad
+        fw = max(1, int(inner_w * (level / 100)))
+        try:
+            inner_r = max(1, r - pad)
+            d.rounded_rectangle(
+                (x + pad, y + pad, x + pad + fw, y + h - pad),
+                radius=inner_r, fill=0,
+            )
+        except (AttributeError, TypeError):
+            d.rectangle((x + pad, y + pad, x + pad + fw, y + h - pad), fill=0)
 
 
 def draw_wifi_icon(d, x, y, bars):
@@ -94,32 +105,29 @@ def draw_wifi_icon(d, x, y, bars):
 # ─── 状态栏 / 页标题 ───────────────────────────────
 
 def render_status_bar(d, W: int, s: Snapshot) -> None:
-    """顶部状态栏：左 时钟+时间 / 中 WiFi格 / 右 电池+%。dBm 移除给视觉减负。"""
+    """iPhone 风格状态栏：左 时间 / 右 WiFi+电量+电池胶囊，无底部分隔线。"""
     f_time = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 14)
-    f_pct = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 13)
+    f_pct = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 12)
 
-    # 左：时钟 + 时间
-    icon_clock(d, 4, 6)
-    d.text((18, 1), s.minute_str, font=f_time, fill=0)
+    # 左：时间（iPhone 不带时钟图标，只显示加粗时间）
+    d.text((6, -1), s.minute_str, font=f_time, fill=0)
 
-    # 右：电量百分比 + 电池图标
+    # 右：电池胶囊
     bat_lbl = f'{s.battery_pct}%' if s.battery_pct is not None else '?'
     if s.charging:
         bat_lbl += '+'
     pct_w = int(d.textlength(bat_lbl, font=f_pct))
-    icon_w, icon_h = 22, 10
+    icon_w, icon_h = 26, 12
     icon_x = W - 6 - icon_w
-    icon_y = (SB_H - icon_h) // 2 - 1
-    pct_x = icon_x - 4 - pct_w
-    d.text((pct_x, 3), bat_lbl, font=f_pct, fill=0)
+    icon_y = (SB_H - icon_h) // 2
+    pct_x = icon_x - 3 - pct_w
+    d.text((pct_x, 1), bat_lbl, font=f_pct, fill=0)
     draw_battery_icon(d, icon_x, icon_y, icon_w, icon_h, s.battery_raw)
 
-    # 中右：WiFi 4 格（去掉 dBm 数字 — 信号强弱看格数足够）
+    # 右中：WiFi 4 格（紧贴电量百分比左侧）
     wifi_w = 4 * 3
-    wifi_x = pct_x - 8 - wifi_w
-    draw_wifi_icon(d, wifi_x, 6, s.rssi_bars)
-
-    d.line((0, SB_H, W, SB_H), fill=0, width=1)
+    wifi_x = pct_x - 5 - wifi_w
+    draw_wifi_icon(d, wifi_x, 4, s.rssi_bars)
 
 
 def render_page_title(d, W: int, idx: int, total: int, name: str,
