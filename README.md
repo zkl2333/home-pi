@@ -10,8 +10,8 @@
 |---|---|
 | 型号 | Raspberry Pi Zero 2 W Rev 1.0（4 核 ARMv7 / 512MB） |
 | 系统 | Raspbian 11 (bullseye)，内核 6.1.21-v7+ |
-| 主机名 / IP | `zero2w` / `192.168.31.35`（DHCP / WiFi） |
-| 电源 | PiSugar 3（含 RTC，已接入内核） |
+| 主机名 | `zero2w.local`（mDNS；IP 由路由器 DHCP 分配，不固定） |
+| 电源 | PiSugar 3（含 RTC，已接入内核；固件 v1.3.4） |
 | 屏幕 | Waveshare 2.13" V3 e-Paper（250×122，黑白） |
 
 ## 目录结构
@@ -46,16 +46,16 @@ cd ~/dev/pi
 bash bootstrap.sh
 ```
 
-幂等。详细做了哪些事看 [`bootstrap.sh`](bootstrap.sh)，覆盖：apt 依赖、SPI/I2C、e-Paper SDK、PiSugar 套件、sugar-wifi-conf BLE 配 WiFi、SSH 公钥同步 cron、内核 RTC、systemd 服务安装。
+幂等。详细做了哪些事看 [`bootstrap.sh`](bootstrap.sh)，覆盖：apt 依赖（含 `i2c-tools`）、SPI/I2C、e-Paper SDK、PiSugar 套件（**锁版本 2.3.2** — 1.7.x 在 long-uptime 会死锁）、sugar-wifi-conf BLE 配 WiFi、SSH 公钥同步 cron、内核 RTC（`dtoverlay=i2c-rtc,ds3231`）、systemd 服务安装。
 
 ## Pi 上常驻服务
 
 | 单元 | 内容 |
 |---|---|
 | `sshd` | SSH（authorized_keys 由 cron 从 GitHub API 同步）|
-| `pisugar-server` | PiSugar 3 状态服务（HTTP 8421 / WS 8422 / TCP 8423）|
+| `pisugar-server` | PiSugar 3 状态服务（HTTP 8421 / WS 8422 / TCP 8423；版本锁 2.3.2）|
 | `sugar-wifi-config` | 蓝牙配 WiFi（PiSugar APP / 微信小程序 / web-bluetooth 都可连）|
-| `eink-status` | 墨水屏状态显示 daemon（事件驱动）|
+| `eink-status` | 墨水屏状态显示 daemon（事件驱动；6 页：概览/系统/电源/日历/天气/新闻，单击下一页 / 双击上一页 / 长按回首页）|
 
 ## SSH 公钥管理
 
