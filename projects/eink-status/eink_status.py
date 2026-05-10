@@ -319,16 +319,14 @@ def draw_tap_badge(d, W, H, kind: str):
 
 # ─── 渲染 ──────────────────────────────────────────
 
-def render(image: Image.Image, s: Snapshot) -> None:
-    d = ImageDraw.Draw(image)
-    W, H = image.size
+SB_H = 22                    # 顶部状态栏高度
+PAGE_TITLE_H = 14            # 页标题条高度
+CONTENT_Y0 = SB_H + PAGE_TITLE_H + 2
 
+
+def render_status_bar(d, W: int, s: Snapshot) -> None:
+    """所有页面共享的顶部状态栏：时钟 / WiFi / 电池。"""
     f_sb = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 13)
-    f_xl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 20)
-    f_cn = ImageFont.truetype(FONT_CJK, 12)
-    f_mono = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 11)
-
-    SB_H = 22
     icon_clock(d, 2, 6)
     d.text((16, 2), s.minute_str, font=f_sb, fill=0)
 
@@ -347,44 +345,159 @@ def render(image: Image.Image, s: Snapshot) -> None:
     rssi_lbl = f' {s.rssi}dBm' if s.rssi is not None else ' --'
     d.text((wifi_x, 2), rssi_lbl, font=f_sb, fill=0)
 
-    d.line((0, SB_H, W, SB_H), fill=0, width=1)
 
-    d.text((3, 26), s.ip, font=f_xl, fill=0)
-    d.text((3, 51), f'{s.hostname}  ·  运行 {s.uptime_str}', font=f_cn, fill=0)
+def render_page_title(d, W: int, idx: int, total: int, name: str) -> None:
+    """页指示：● ○ ○ + 页名，下方分割线。"""
+    f = ImageFont.truetype(FONT_CJK, 12)
+    r = 3
+    gap = 5
+    dx = 4
+    dy = SB_H + (PAGE_TITLE_H - r * 2) // 2
+    for i in range(total):
+        if i == idx:
+            d.ellipse((dx, dy, dx + r * 2, dy + r * 2), fill=0)
+        else:
+            d.ellipse((dx, dy, dx + r * 2, dy + r * 2), outline=0, width=1)
+        dx += r * 2 + gap
+    d.text((dx + 2, SB_H), name, font=f, fill=0)
+    y_div = SB_H + PAGE_TITLE_H
+    d.line((0, y_div, W, y_div), fill=0, width=1)
 
-    volt_parts = []
+
+def render_overview(d, image: Image.Image, s: Snapshot) -> None:
+    """概览页：大字 IP + 主机名/运行时长 + 电源摘要。"""
+    W, H = image.size
+    f_xl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 22)
+    f_cn = ImageFont.truetype(FONT_CJK, 13)
+    f_cn_sm = ImageFont.truetype(FONT_CJK, 11)
+    f_mono = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 12)
+
+    y = CONTENT_Y0 + 2
+    d.text((6, y), s.ip, font=f_xl, fill=0)
+
+    y += 28
+    d.text((6, y), s.hostname, font=f_cn, fill=0)
+    up_str = f'已运行 {s.uptime_str}'
+    up_w = int(d.textlength(up_str, font=f_cn_sm))
+    d.text((W - 6 - up_w, y + 2), up_str, font=f_cn_sm, fill=0)
+
+    y += 20
+    d.line((6, y, W - 6, y), fill=0, width=1)
+    y += 5
+    parts = []
     if s.bat_v is not None:
-        volt_parts.append(f'{s.bat_v:.2f}V')
+        parts.append(f'{s.bat_v:.2f}V')
     if s.bat_i is not None and abs(s.bat_i) > 0.001:
         ma = s.bat_i * 1000 if abs(s.bat_i) < 10 else s.bat_i
-        volt_parts.append(f'{ma:+.0f}mA')
-    if volt_parts:
-        right_text = '  '.join(volt_parts)
-        rw = int(d.textlength(right_text, font=f_mono))
-        rx = W - 3 - rw
-        icon_bolt(d, rx - 11, 51)
-        d.text((rx, 52), right_text, font=f_mono, fill=0)
+        parts.append(f'{ma:+.0f}mA')
+    if s.battery_pct is not None:
+        parts.append(f'电量 {s.battery_pct}%')
+    if parts:
+        icon_bolt(d, 6, y)
+        d.text((20, y + 1), '   '.join(parts), font=f_mono, fill=0)
 
-    d.line((3, 67, W - 3, 67), fill=0, width=1)
 
-    row_y = (71, 87, 103)
-    icon_thermo(d, 3, row_y[0] - 1)
-    cpu_str = f'{s.cpu_temp}°C' if s.cpu_temp is not None else '?'
-    d.text((16, row_y[0]), f'温度 {cpu_str}', font=f_cn, fill=0)
-    icon_cpu(d, 128, row_y[0])
-    d.text((144, row_y[0]), f'负载 {s.load1:.2f}', font=f_cn, fill=0)
+def render_system(d, image: Image.Image, s: Snapshot) -> None:
+    """系统页：2x2 网格 — 温度 / 负载 / 内存 / 磁盘。"""
+    W, H = image.size
+    f_label = ImageFont.truetype(FONT_CJK, 11)
+    f_val = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 17)
+    f_unit = ImageFont.truetype(FONT_CJK, 11)
+    f_sub = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 10)
 
-    icon_ram(d, 3, row_y[1])
-    mem_pct = s.used_mb * 100.0 / s.total_mb if s.total_mb else 0
-    d.text((16, row_y[1]), f'内存 {mem_pct:.0f}%  ({s.used_mb}/{s.total_mb}M)',
-           font=f_cn, fill=0)
+    mid_x = W // 2
+    row_top = (CONTENT_Y0 + 2, CONTENT_Y0 + 42)
 
-    icon_disk(d, 3, row_y[2])
-    disk_pct = s.used_gb * 100.0 / s.total_gb if s.total_gb else 0
-    d.text((16, row_y[2]),
-           f'磁盘 {disk_pct:.0f}%  ({s.used_gb:.1f}/{s.total_gb:.0f}G)',
-           font=f_cn, fill=0)
+    mem_pct = int(s.used_mb * 100 / s.total_mb) if s.total_mb else None
+    disk_pct = int(s.used_gb * 100 / s.total_gb) if s.total_gb else None
 
+    cells = [
+        (0, 0, icon_thermo,
+         '温度', f'{s.cpu_temp}' if s.cpu_temp is not None else '?', '°C', None),
+        (1, 0, icon_cpu,
+         '负载', f'{s.load1:.2f}', '', None),
+        (0, 1, icon_ram,
+         '内存', f'{mem_pct}' if mem_pct is not None else '?', '%',
+         f'{s.used_mb}/{s.total_mb}M' if s.total_mb else None),
+        (1, 1, icon_disk,
+         '磁盘', f'{disk_pct}' if disk_pct is not None else '?', '%',
+         f'{s.used_gb:.1f}/{s.total_gb:.0f}G' if s.total_gb else None),
+    ]
+    col_x = (6, mid_x + 6)
+
+    for col, row, icon_fn, label, val, unit, sub in cells:
+        x = col_x[col]
+        y = row_top[row]
+        icon_fn(d, x, y - 1)
+        d.text((x + 14, y - 1), label, font=f_label, fill=0)
+        d.text((x, y + 13), val, font=f_val, fill=0)
+        if unit:
+            vw = int(d.textlength(val, font=f_val))
+            d.text((x + vw + 2, y + 19), unit, font=f_unit, fill=0)
+        if sub:
+            d.text((x, y + 32), sub, font=f_sub, fill=0)
+
+    d.line((mid_x, CONTENT_Y0, mid_x, H - 2), fill=0, width=1)
+    d.line((0, row_top[1] - 2, W, row_top[1] - 2), fill=0, width=1)
+
+
+def render_power(d, image: Image.Image, s: Snapshot) -> None:
+    """电源页：大字电量 + 状态 + 电池条 + 电压/电流。"""
+    W, H = image.size
+    f_xxl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 28)
+    f_cn = ImageFont.truetype(FONT_CJK, 13)
+    f_label = ImageFont.truetype(FONT_CJK, 11)
+    f_val = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 16)
+
+    y = CONTENT_Y0
+    bat_str = f'{s.battery_raw:.1f}%' if s.battery_raw is not None else '?'
+    d.text((6, y), bat_str, font=f_xxl, fill=0)
+
+    if s.charging:
+        state = '充电中'
+    elif s.plugged:
+        state = '接电'
+    else:
+        state = '放电'
+    state_w = int(d.textlength(state, font=f_cn))
+    d.text((W - 6 - state_w, y + 10), state, font=f_cn, fill=0)
+
+    bar_y = y + 34
+    bar_x1, bar_x2 = 6, W - 6
+    bar_h = 8
+    d.rectangle((bar_x1, bar_y, bar_x2, bar_y + bar_h), outline=0, width=1)
+    if s.battery_raw is not None and s.battery_raw > 0:
+        fill_w = int((bar_x2 - bar_x1 - 2) * (s.battery_raw / 100))
+        if fill_w > 0:
+            d.rectangle((bar_x1 + 1, bar_y + 1,
+                         bar_x1 + 1 + fill_w, bar_y + bar_h - 1), fill=0)
+
+    y = bar_y + 16
+    col2_x = W // 2 + 6
+    if s.bat_v is not None:
+        d.text((6, y + 2), '电压', font=f_label, fill=0)
+        d.text((36, y), f'{s.bat_v:.3f}V', font=f_val, fill=0)
+    if s.bat_i is not None:
+        ma = s.bat_i * 1000 if abs(s.bat_i) < 10 else s.bat_i
+        d.text((col2_x, y + 2), '电流', font=f_label, fill=0)
+        d.text((col2_x + 30, y), f'{ma:+.0f}mA', font=f_val, fill=0)
+
+
+# 页面注册表：按顺序循环，long-press 回到第 0 页
+PAGES: list[tuple[str, callable]] = [
+    ('概览', render_overview),
+    ('系统', render_system),
+    ('电源', render_power),
+]
+
+
+def render(image: Image.Image, s: Snapshot, page_idx: int) -> None:
+    d = ImageDraw.Draw(image)
+    W, H = image.size
+    render_status_bar(d, W, s)
+    name, page_fn = PAGES[page_idx]
+    render_page_title(d, W, page_idx, len(PAGES), name)
+    page_fn(d, image, s)
     if s.tap_trigger:
         draw_tap_badge(d, W, H, s.tap_trigger)
 
@@ -400,10 +513,11 @@ class ScreenController:
         self.partial_count = 0
         self.last_refresh_at = 0.0
         self.last_snapshot: Snapshot | None = None
+        self.current_page = 0
 
     def _build_buffer(self, s: Snapshot):
         img = Image.new('1', (self.epd.height, self.epd.width), 255)
-        render(img, s)
+        render(img, s, self.current_page)
         if ROTATE_180:
             img = img.rotate(180)
         return self.epd.getbuffer(img)
@@ -508,9 +622,16 @@ def main() -> int:
             now = time.time()
 
             if kind == 'tap':
+                # 单击下一页、双击上一页、长按回首页
+                if payload == 'single':
+                    ctrl.current_page = (ctrl.current_page + 1) % len(PAGES)
+                elif payload == 'double':
+                    ctrl.current_page = (ctrl.current_page - 1) % len(PAGES)
+                elif payload == 'long':
+                    ctrl.current_page = 0
                 last_tap = (payload, now + TAP_BADGE_LINGER_SEC)
                 ns = take_snapshot(tap_trigger=payload)
-                ctrl.refresh(ns, f'tap:{payload}')
+                ctrl.refresh(ns, f'tap:{payload}:p{ctrl.current_page}')
                 continue
 
             # poll / safety：取快照，如果近期有 tap 仍在 linger 期内就保留 badge
