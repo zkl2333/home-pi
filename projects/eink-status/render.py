@@ -56,43 +56,74 @@ def icon_disk(d, x, y):
     d.ellipse((x + 4, y + 2, x + 6, y + 4), fill=0)
 
 
+def _draw_zbolt(d, x: int, y: int, fill: int = 0) -> None:
+    """5×8 经典 Z 字闪电。逐行像素绘制（避开 polygon 自交叉的不确定性）。
+
+    关键：中段两行错位 1px 形成"折角"，不是两个三角形对接（那是平行四边形）。
+
+        ...█.    y=0
+        ..██.    y=1
+        .██..    y=2   ← 上半往左下走
+        ████.    y=3   ← 中段左凸 (x=0..3)
+        .████    y=4   ← 中段右凸 (x=1..4) ← Z 折
+        ..██.    y=5
+        .██..    y=6   ← 下半往左下走（同方向）
+        ██...    y=7
+    """
+    rows = [
+        (3, 3), (2, 3), (1, 2),
+        (0, 3),
+        (1, 4),
+        (2, 3), (1, 2), (0, 1),
+    ]
+    for dy, (x1, x2) in enumerate(rows):
+        d.rectangle((x + x1, y + dy, x + x2, y + dy), fill=fill)
+
+
 def icon_bolt(d, x, y):
-    pts = [(x + 5, y), (x + 1, y + 6), (x + 4, y + 6),
-           (x + 2, y + 12), (x + 7, y + 5), (x + 4, y + 5)]
-    d.polygon(pts, fill=0)
+    """8×11 大号 Z 字闪电（概览/电源页电源行前缀）。逐行像素图。"""
+    rows = [
+        (5, 5),                 # y=0
+        (4, 5),                 # y=1
+        (3, 4),                 # y=2
+        (2, 3),                 # y=3
+        (1, 5),                 # y=4  中段左凸
+        (2, 6),                 # y=5  中段右凸（Z 折）
+        (3, 4),                 # y=6
+        (2, 3),                 # y=7
+        (1, 2),                 # y=8
+        (0, 1),                 # y=9
+        (0, 0),                 # y=10
+    ]
+    for dy, (x1, x2) in enumerate(rows):
+        d.rectangle((x + x1, y + dy, x + x2, y + dy), fill=0)
 
 
 def draw_battery_icon(d, x, y, w, h, level, charging=False):
-    """iPhone 风格电池胶囊。charging=True 时画闪电（不画填充条），否则画填充条。"""
+    """iPhone 风格电池胶囊。
+    - 不充电：电量条按 level 比例
+    - 充电：电量条画满 + 中央凿空 Z 字闪电（实际 % 见状态栏文字）
+    """
     r = max(1, h // 2 - 1)
     try:
         d.rounded_rectangle((x, y, x + w, y + h), radius=r, outline=0, width=1)
     except (AttributeError, TypeError):
         d.rectangle((x, y, x + w, y + h), outline=0, width=1)
-    # 右凸（电池正极小突起）
+    # 右凸（电池正极）
     nub_h = max(3, h - 6)
     nub_y = y + (h - nub_h) // 2
     d.rectangle((x + w + 1, nub_y, x + w + 2, nub_y + nub_h), fill=0)
 
+    pad = 2
+    inner_w = w - 2 * pad
     if charging:
-        # 居中画 5×8 的迷你闪电（iPhone 在电池里画 ⚡ 表示充电）
-        cx = x + w // 2
-        cy = y + h // 2
-        bx = cx - 2
-        by = cy - 4
-        pts = [
-            (bx + 3, by),
-            (bx, by + 4),
-            (bx + 2, by + 4),
-            (bx + 1, by + 8),
-            (bx + 4, by + 4),
-            (bx + 2, by + 4),
-        ]
-        d.polygon(pts, fill=0)
+        fw = inner_w
     elif level is not None and level > 0:
-        pad = 2
-        inner_w = w - 2 * pad
         fw = max(1, int(inner_w * (level / 100)))
+    else:
+        fw = 0
+
+    if fw > 0:
         try:
             inner_r = max(1, r - pad)
             d.rounded_rectangle(
@@ -101,6 +132,12 @@ def draw_battery_icon(d, x, y, w, h, level, charging=False):
             )
         except (AttributeError, TypeError):
             d.rectangle((x + pad, y + pad, x + pad + fw, y + h - pad), fill=0)
+
+    if charging:
+        # 黑色电量条上凿空 Z 字闪电（5×8 居中）
+        bx = x + w // 2 - 2
+        by = y + (h - 8) // 2
+        _draw_zbolt(d, bx, by, fill=255)
 
 
 def draw_wifi_icon(d, x, y, bars):
@@ -170,25 +207,40 @@ def render_status_bar(d, W: int, s: Snapshot, page_idx: int = 0,
 # ─── 各页 ──────────────────────────────────────────
 
 def render_overview(d, image: Image.Image, s: Snapshot) -> None:
-    """概览页：大字 IP + 主机名/运行时长 + 电源摘要。"""
+    """概览页：健康仪表盘 — IP / 主机名+uptime / 电源单行 / 4 列系统 mini stats。
+
+    布局（122 px 屏 - 22 px 状态栏 = 98 px 内容区）：
+      y=25..47  IP (20pt 左) + hostname / uptime (10-11pt 右上双行)
+      y=49      分隔线
+      y=53..67  电源单行：⚡ V + mA + % + 状态
+      y=70      分隔线
+      y=74..    4 列 mini stats：温度 / 负载 / 内存 / 磁盘
+    """
     W, H = image.size
-    f_xl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 22)
-    f_cn = ImageFont.truetype(FONT_CJK, 13)
-    f_cn_sm = ImageFont.truetype(FONT_CJK, 11)
-    f_mono = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 12)
+    f_ip = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 20)
+    f_meta = ImageFont.truetype(FONT_CJK, 11)
+    f_meta_sm = ImageFont.truetype(FONT_CJK, 10)  # uptime 含中文（天/时/分），必须用 CJK 字体
+    f_pwr = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 12)
+    f_pwr_state = ImageFont.truetype(FONT_CJK, 11)
+    f_lab = ImageFont.truetype(FONT_CJK, 10)
+    f_val = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 14)
 
-    y = CONTENT_Y0 + 2
-    d.text((6, y), s.ip, font=f_xl, fill=0)
+    # ─── 顶部：IP（左大字）+ 主机名/uptime（右上双行）
+    y = CONTENT_Y0 + 1
+    d.text((6, y), s.ip, font=f_ip, fill=0)
 
-    y += 28
-    d.text((6, y), s.hostname, font=f_cn, fill=0)
-    up_str = f'已运行 {s.uptime_str}'
-    up_w = int(d.textlength(up_str, font=f_cn_sm))
-    d.text((W - 6 - up_w, y + 2), up_str, font=f_cn_sm, fill=0)
+    hn_w = int(d.textlength(s.hostname, font=f_meta))
+    d.text((W - 6 - hn_w, y), s.hostname, font=f_meta, fill=0)
+    up_w = int(d.textlength(s.uptime_str, font=f_meta_sm))
+    d.text((W - 6 - up_w, y + 12), s.uptime_str, font=f_meta_sm, fill=0)
 
-    y += 20
+    y += 25
     d.line((6, y, W - 6, y), fill=0, width=1)
-    y += 5
+
+    # ─── 中部：电源单行（icon + V + mA + % + 状态）
+    y += 4
+    icon_bolt(d, 6, y)
+
     parts = []
     if s.bat_v is not None:
         parts.append(f'{s.bat_v:.2f}V')
@@ -196,10 +248,49 @@ def render_overview(d, image: Image.Image, s: Snapshot) -> None:
         ma = s.bat_i * 1000 if abs(s.bat_i) < 10 else s.bat_i
         parts.append(f'{ma:+.0f}mA')
     if s.battery_pct is not None:
-        parts.append(f'电量 {s.battery_pct}%')
+        parts.append(f'{s.battery_pct}%')
     if parts:
-        icon_bolt(d, 6, y)
-        d.text((20, y + 1), '   '.join(parts), font=f_mono, fill=0)
+        d.text((20, y), '  '.join(parts), font=f_pwr, fill=0)
+
+    if s.charging:
+        state = '充电中'
+    elif s.plugged:
+        state = '接电'
+    else:
+        state = '放电'
+    sw = int(d.textlength(state, font=f_pwr_state))
+    d.text((W - 6 - sw, y + 1), state, font=f_pwr_state, fill=0)
+
+    y += 17
+    d.line((6, y, W - 6, y), fill=0, width=1)
+
+    # ─── 底部：4 列 mini stats（temp / load / mem / disk）
+    y += 4
+    col_w = (W - 12) / 4
+
+    mem_pct = int(s.used_mb * 100 / s.total_mb) if s.total_mb else None
+    disk_pct = int(s.used_gb * 100 / s.total_gb) if s.total_gb else None
+
+    cells = [
+        (icon_thermo, '温度',
+         f'{s.cpu_temp}°' if s.cpu_temp is not None else '-',
+         'CPU'),
+        (icon_cpu, '负载', f'{s.load1:.2f}', '1m'),
+        (icon_ram, '内存',
+         f'{mem_pct}%' if mem_pct is not None else '-',
+         f'{s.used_mb}/{s.total_mb}M' if s.total_mb else ''),
+        (icon_disk, '磁盘',
+         f'{disk_pct}%' if disk_pct is not None else '-',
+         f'{s.used_gb:.1f}/{s.total_gb:.0f}G' if s.total_gb else ''),
+    ]
+    f_sub = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 9)
+    for i, (icon_fn, label, val, sub) in enumerate(cells):
+        cx = 6 + int(col_w * i)
+        icon_fn(d, cx, y)
+        d.text((cx + 14, y - 1), label, font=f_lab, fill=0)
+        d.text((cx, y + 14), val, font=f_val, fill=0)
+        if sub:
+            d.text((cx, y + 30), sub, font=f_sub, fill=0)
 
 
 def render_system(d, image: Image.Image, s: Snapshot) -> None:
@@ -208,7 +299,7 @@ def render_system(d, image: Image.Image, s: Snapshot) -> None:
     f_label = ImageFont.truetype(FONT_CJK, 11)
     f_val = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 17)
     f_unit = ImageFont.truetype(FONT_CJK, 11)
-    f_sub = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 10)
+    f_sub = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono.ttf', 9)
 
     mid_x = W // 2
     row_top = (CONTENT_Y0 + 2, CONTENT_Y0 + 42)
@@ -240,20 +331,33 @@ def render_system(d, image: Image.Image, s: Snapshot) -> None:
             vw = int(d.textlength(val, font=f_val))
             d.text((x + vw + 2, y + 19), unit, font=f_unit, fill=0)
         if sub:
-            d.text((x, y + 32), sub, font=f_sub, fill=0)
+            d.text((x, y + 30), sub, font=f_sub, fill=0)
 
-    d.line((mid_x, CONTENT_Y0, mid_x, H - 2), fill=0, width=1)
+    d.line((mid_x, CONTENT_Y0, mid_x, H - 14), fill=0, width=1)
     d.line((0, row_top[1] - 2, W, row_top[1] - 2), fill=0, width=1)
+
+    # ─── 底部一行：已运行 · WiFi 信号 · IP（次要信息，10px 高）
+    d.line((0, H - 14, W, H - 14), fill=0, width=1)
+    f_bot = ImageFont.truetype(FONT_CJK, 9)
+    parts = [s.uptime_str]
+    if s.rssi is not None:
+        parts.append(f'WiFi {s.rssi}dBm')
+    parts.append(s.ip)
+    d.text((6, H - 12), '  ·  '.join(parts), font=f_bot, fill=0)
 
 
 def render_power(d, image: Image.Image, s: Snapshot) -> None:
-    """电源页：大字电量 + 状态 + 电池条 + 电压/电流。"""
+    """电源页：大字电量 + 状态 / 电池条 / 电压电流 / 估算（来自 data._estimate_battery_eta）。"""
     W, H = image.size
     f_xxl = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 28)
     f_cn = ImageFont.truetype(FONT_CJK, 13)
     f_label = ImageFont.truetype(FONT_CJK, 11)
     f_val = ImageFont.truetype(f'{FONT_DEJAVU}/DejaVuSansMono-Bold.ttf', 16)
+    f_eta_lbl = ImageFont.truetype(FONT_CJK, 11)
+    # bat_eta_val 含中文（X时YY分/还需X分），不能用 DejaVu Mono
+    f_eta_val = ImageFont.truetype(FONT_CJK, 13)
 
+    # ─ 大字电量 + 状态
     y = CONTENT_Y0
     bat_str = f'{s.battery_raw:.1f}%' if s.battery_raw is not None else '?'
     d.text((6, y), bat_str, font=f_xxl, fill=0)
@@ -267,9 +371,10 @@ def render_power(d, image: Image.Image, s: Snapshot) -> None:
     state_w = int(d.textlength(state, font=f_cn))
     d.text((W - 6 - state_w, y + 10), state, font=f_cn, fill=0)
 
+    # ─ 电池条（10 px 粗）
     bar_y = y + 34
     bar_x1, bar_x2 = 6, W - 6
-    bar_h = 8
+    bar_h = 10
     d.rectangle((bar_x1, bar_y, bar_x2, bar_y + bar_h), outline=0, width=1)
     if s.battery_raw is not None and s.battery_raw > 0:
         fill_w = int((bar_x2 - bar_x1 - 2) * (s.battery_raw / 100))
@@ -277,6 +382,7 @@ def render_power(d, image: Image.Image, s: Snapshot) -> None:
             d.rectangle((bar_x1 + 1, bar_y + 1,
                          bar_x1 + 1 + fill_w, bar_y + bar_h - 1), fill=0)
 
+    # ─ 电压 / 电流（PiSugar bat_i 实测大多 0，仍展示给用户判断）
     y = bar_y + 16
     col2_x = W // 2 + 6
     if s.bat_v is not None:
@@ -286,6 +392,16 @@ def render_power(d, image: Image.Image, s: Snapshot) -> None:
         ma = s.bat_i * 1000 if abs(s.bat_i) < 10 else s.bat_i
         d.text((col2_x, y + 2), '电流', font=f_label, fill=0)
         d.text((col2_x + 30, y), f'{ma:+.0f}mA', font=f_val, fill=0)
+
+    # ─ 估算行（充满还要/续航约 — 基于 30 分钟历史电量变化率，不依赖 bat_i）
+    y_eta = y + 22
+    d.line((6, y_eta, W - 6, y_eta), fill=0, width=1)
+    y_eta += 5
+    if s.bat_eta_label:
+        d.text((6, y_eta + 2), s.bat_eta_label, font=f_eta_lbl, fill=0)
+    if s.bat_eta_val:
+        vw = int(d.textlength(s.bat_eta_val, font=f_eta_val))
+        d.text((W - 6 - vw, y_eta), s.bat_eta_val, font=f_eta_val, fill=0)
 
 
 def _draw_fetch_placeholder(d, W: int, H: int, label: str,
@@ -356,12 +472,23 @@ def render_news(d, image: Image.Image, s: Snapshot) -> None:
     d.text((6, y), header, font=f_label, fill=0)
     y += 14
 
-    items = data.get('news', [])[:5]
+    # 按实际像素宽度截断（CJK 中文/数字/英文混合时字宽不一）
+    max_w = W - 12
+    items = data.get('news', [])[:6]
     for i, item in enumerate(items, 1):
-        text = item.strip().replace('\n', ' ')
-        truncated = text if len(text) <= 22 else text[:21] + '…'
-        d.text((6, y), f'{i}. {truncated}', font=f_news, fill=0)
-        y += 13
+        text = f"{i}. {item.strip().replace(chr(10), ' ')}"
+        if int(d.textlength(text, font=f_news)) > max_w:
+            # 二分截断到合适长度
+            lo, hi = 1, len(text)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if int(d.textlength(text[:mid] + '…', font=f_news)) <= max_w:
+                    lo = mid
+                else:
+                    hi = mid - 1
+            text = text[:lo] + '…'
+        d.text((6, y), text, font=f_news, fill=0)
+        y += 14
         if y > H - 12:
             break
 

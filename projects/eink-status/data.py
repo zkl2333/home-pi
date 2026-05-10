@@ -155,6 +155,64 @@ class Snapshot:
     used_gb: float
     total_gb: float
     uptime_str: str
+    # 由 _estimate_battery_eta 填充：'充满还要' / '续航约' / '采样中' / 状态文字
+    bat_eta_label: str = ''
+    bat_eta_val: str = ''
+
+
+# ─── 电池估算（用历史采样推算变化率，不依赖 bat_i —— PiSugar 报 0 居多）
+_BATTERY_HISTORY: list[tuple[float, float]] = []
+_HISTORY_MAX_AGE = 1800   # 保留 30 分钟内
+_HISTORY_MIN_WIN  = 300   # 至少 5 分钟样本才算速率（窗口短噪声大）
+
+
+def _update_battery_history(ts: float, level: float | None) -> None:
+    if level is None:
+        return
+    _BATTERY_HISTORY.append((ts, level))
+    cutoff = ts - _HISTORY_MAX_AGE
+    while _BATTERY_HISTORY and _BATTERY_HISTORY[0][0] < cutoff:
+        _BATTERY_HISTORY.pop(0)
+
+
+def _fmt_eta(sec: float) -> str:
+    sec = int(max(0, sec))
+    h, rem = divmod(sec, 3600)
+    m = rem // 60
+    if h > 48:
+        return f'{h // 24}天{h % 24}时'
+    if h:
+        return f'{h}时{m:02d}分'
+    return f'{m}分'
+
+
+def _estimate_battery_eta(level: float | None,
+                          charging: bool, plugged: bool) -> tuple[str, str]:
+    if level is None:
+        return '', ''
+    n = len(_BATTERY_HISTORY)
+    if n < 2:
+        return '采样中', '需 5 分钟'
+    now_ts, now_level = _BATTERY_HISTORY[-1]
+    early_ts, early_level = _BATTERY_HISTORY[0]
+    win = now_ts - early_ts
+    if win < _HISTORY_MIN_WIN:
+        remain = _HISTORY_MIN_WIN - win
+        return '采样中', f'还需{int(remain // 60) + 1}分'
+
+    rate = (now_level - early_level) / win   # %/秒
+    if charging and rate > 1e-5:
+        return '充满还要', _fmt_eta((100 - now_level) / rate)
+    if not plugged and rate < -1e-5:
+        return '续航约', _fmt_eta(now_level / -rate)
+    # 充电中但电量不升（pisugar 间歇切断）/ 接电不充 / 满电待机
+    if plugged and now_level >= 95:
+        return '已满电', ''
+    if plugged:
+        return '接电中', ''
+    if now_level < 20:
+        return '电量偏低', ''
+    return '电量稳定', ''
 
 
 def take_snapshot() -> Snapshot:
@@ -171,8 +229,11 @@ def take_snapshot() -> Snapshot:
     rssi = get_wifi_rssi()
     used_mb, total_mb = get_mem()
     used_gb, total_gb = get_disk('/')
+    ts = time.time()
+    _update_battery_history(ts, battery_raw)
+    eta_label, eta_val = _estimate_battery_eta(battery_raw, charging, plugged)
     return Snapshot(
-        ts=time.time(),
+        ts=ts,
         minute_str=now.strftime('%H:%M'),
         date_str=now.strftime('%m-%d'),
         ip=get_ip(),
@@ -192,6 +253,8 @@ def take_snapshot() -> Snapshot:
         used_gb=used_gb,
         total_gb=total_gb,
         uptime_str=get_uptime_str(),
+        bat_eta_label=eta_label,
+        bat_eta_val=eta_val,
     )
 
 
