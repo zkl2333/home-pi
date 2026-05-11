@@ -4,6 +4,8 @@
 
 整套配置可重现：在新 Pi 上 `git clone` 后跑 [`bootstrap.sh`](bootstrap.sh) 即可恢复到当前状态。
 
+![Pi Zero 2W + 墨水屏](.github/images/zero2w-eink.jpg)
+
 ## 设备
 
 | 项 | 值 |
