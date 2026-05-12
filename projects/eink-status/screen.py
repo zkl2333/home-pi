@@ -25,8 +25,8 @@ from data import Snapshot  # noqa: E402
 from render import render  # noqa: E402
 
 ROTATE_180 = True
-PARTIAL_REFRESH_LIMIT = 30
-FULL_REFRESH_MAX_AGE_SEC = 3600
+PARTIAL_REFRESH_LIMIT = 60
+FULL_REFRESH_MAX_AGE_SEC = 21600
 
 
 class ScreenController:

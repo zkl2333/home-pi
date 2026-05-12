@@ -27,7 +27,7 @@ from render import PAGES
 from screen import ScreenController
 
 POLL_INTERVAL = 10.0
-SAFETY_REFRESH_MAX_AGE_SEC = 600
+SAFETY_REFRESH_MAX_AGE_SEC = 1800
 TAP_RECONNECT_DELAY_SEC = 5
 TAP_READ_TIMEOUT_SEC = 90  # pisugar-server 死锁时能自动重连，不永久挂死
 
