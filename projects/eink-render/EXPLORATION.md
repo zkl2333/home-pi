@@ -17,6 +17,10 @@
 | 5. Python daemon 化 | `6e53b6a` | Python 子进程长期保活，单次 400ms → 10ms。 |
 | 6. 落地 Pi（代码） | `48421bd` | 搬到 `projects/eink-render/`，加 Hono HTTP server + systemd。 |
 | 7. Pi 实际跑通 | `ffcd1c7` | bringup 脚本 + setup-font 三级 fallback，6 页 PNG 真机渲染跟本机像素一致。 |
+| 8. Phosphor 图标 | `bdf70a6` | 引入 Phosphor Regular/Fill 字体做页面图标；状态栏保留手绘像素图标（小尺寸更清晰）。 |
+| 9. Dashboard 拆分 | `59f64eb` | eink-dashboard 拆为独立项目（纯前端 SPA，proxy 到 Pi API），eink-render 瘦身为纯渲染服务。 |
+| 10. eink-status 集成 | `3141446` | render.py → remote_render.py，HTTP 调 eink-render + 3 次重试 + 白屏兜底。 |
+| 11. Squash 合并 | `2302f24` | 23 次探索提交压缩为一个 commit 合入 main。 |
 
 ---
 
@@ -125,7 +129,7 @@
 - `GET /api/render?page=...` —— dashboard / dev 调，返 PNG
 - 数据走独立接口（待 eink-status 实现 HTTP 端点）
 
-### D10：bringup 单独脚本，不直接走 bootstrap.sh
+### D11：bringup 单独脚本，不直接走 bootstrap.sh
 
 **Context**：CLAUDE.md 约定 `projects/<name>/install.sh` 由 bootstrap.sh 第 7 步自动捡。理论上推到 Pi 后 `bash bootstrap.sh` 即可。
 
@@ -136,7 +140,22 @@
 
 **关系**：bringup 是开发期工具，bootstrap.sh 是新机一键复盘。bringup 验证过了，下次新 Pi 走 bootstrap.sh 路径会自动包含 eink-render。
 
-### D9：PNG 镜像走 PNG，不传 vdom 树
+### D9：Phosphor 图标字体策略
+
+**Context**：6 页内容需要小图标（WiFi、电池、日历、温度计等），手绘像素图标逐个画太慢。
+
+**试过**：
+- Phosphor Fill（实心）：≥14px 看得清，8-12px 在 1-bit 下糊成黑块
+- Phosphor Regular（线条）：≥10px 清晰，8px 勉强可用
+
+**结论**：
+- 页面内容图标（≥10px）：用 Phosphor Regular 字体，通过 Unicode codepoint 引用
+- 状态栏小图标（WiFi 信号、电池电量）：保留手绘像素图标——在 4-8px 级别比任何字体图标都清晰
+- Phosphor 字体入库 git（920KB，Pi 无 CDN 下载源）；wqy-microhei 继续 gitignored（9.8MB，setup-font.mjs 三级 fallback）
+
+**约定写入 renderer.jsx**：Regular ≥10px，Fill ≥14px，状态栏用手绘。
+
+### D10：PNG 镜像走 PNG，不传 vdom 树
 
 **用户问**：能不能传 vdom 树（"像 SSR"）让浏览器自己渲染屏幕镜像？
 
@@ -190,12 +209,14 @@ Pi Zero 2W 是 armv7l 32 位。官方在 v24 把 armv7 从 Tier 1 降为 Experim
 Pi (zero2w.local)
 ┌─────────────────────────────────────────────────────────┐
 │                                                         │
-│  eink-status (Python daemon)        [现有，未改造]        │
+│  eink-status (Python daemon)                             │
 │    ├ PiSugar 数据采集                                    │
 │    ├ tap 事件（单击/双击/长按）                           │
+│    ├ remote_render.py → HTTP POST eink-render            │
+│    │   (3 次重试 + 白屏兜底，不会因渲染挂而 crash)        │
 │    └ e-Paper 屏驱动                                      │
 │                                                         │
-│  eink-render (Node + Hono on :8787)  [新加]              │
+│  eink-render (Node + Hono on :8787)                      │
 │    │                                                    │
 │    ├ POST /api/render  (eink-status 调，传数据回 PNG)    │
 │    ├ GET  /api/render?page=...  (dashboard/dev)         │
@@ -204,13 +225,14 @@ Pi (zero2w.local)
 │                                                         │
 └─────────────────────────────────────────────────────────┘
    ▲
-   │ HTTP（内网，可选反代/Tailscale）
+   │ HTTP（内网，Vite proxy / 可选反代）
    │
-内网 Docker 主机
+内网 Docker 主机（或开发机 npm run dev）
 ┌─────────────────────────────────────────────────────────┐
-│  dashboard (跨仓库，独立项目)            [TODO]           │
-│    ├ 前端：屏幕镜像 / 状态 / 控制                          │
-│    └ 后端：纯代理 Pi API，无状态、无 DB                   │
+│  eink-dashboard (projects/eink-dashboard/, 同仓库)       │
+│    ├ React + Vite + Tailwind + shadcn SPA                │
+│    ├ /api/* proxy → Pi:8787                              │
+│    └ 6 页 PNG 实时预览（Pi 不依赖它运行）                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -240,7 +262,7 @@ Python daemon (render_ops.py daemon_loop())
 
 ### 流程（`scripts/pi-bringup.sh <ip>` 自动跑）
 1. ssh 检查 node v22.22.2 / python 3.9.2 / eink-status 仍 active
-2. `tar` 推 `projects/eink-render/` 到 Pi（约 4MB，排除 `node_modules` / `fonts/` / `output-*.png`）
+2. `tar` 推 `projects/eink-render/` 到 Pi（排除 `node_modules` / `output-*.png`，Phosphor 字体随代码一起推）
 3. Pi 上 `install.sh`：
    - 字体三级 fallback（P8）→ 复用系统 ttc，秒过
    - `npm install --omit=dev` → 11 包，12 秒
@@ -271,8 +293,8 @@ PNG 大小（Pi 上）：
 
 ### 还没做的
 - 长跑观察（一晚 / 一天）看内存泄漏、Python daemon 是否会死
-- 真机推屏（按用户要求暂缓）—— eink-status 当前还是自己 imperative PIL 绘制
 - 完整覆盖 bootstrap.sh 第 7 步路径（理论上 bringup 验证过，bootstrap 也会过；新机重装时再验证）
+- eink-dashboard 部署到 Docker 主机（Dockerfile + docker-compose）
 
 ## 性能数据
 
@@ -294,15 +316,16 @@ PNG 大小（Pi 上）：
 
 ## 待办 / 未来方向
 
-按依赖链：
-
-| 优先级 | 任务 | 备注 |
+| 状态 | 任务 | 备注 |
 |---|---|---|
-| 🔵 Step 4 | **改 eink-status 调 eink-render `/api/render`** | 删 imperative PIL 6 页绘制，改 HTTP 拉 PNG。失败兜底：本地极简 fallback 页（"render server down"） |
-| 🔵 Step 5 | **Dashboard（跨仓库 Docker 项目）** | 屏幕镜像（SSE 推 PNG）/ 状态数据 / 远程切页 / 日志 tail |
-| ⚪ 待真机 | **真机视觉验证** | 远程开发看不见屏，先靠 PNG 看。最终上线前需在屏上确认字号、对齐 |
-| ⚪ 长尾 | tap 长按软关机带 goodbye 画面 / 双击切页 | eink-status 已有 tap 路由，只是 action map 未填 |
-| ⚪ 长尾 | 真机 PNG 跟浏览器渲染 diff 工具 | dashboard 上加"高亮像素差异"模式 |
+| ✅ | **eink-status 调 eink-render** | remote_render.py，HTTP POST + 3 次重试 + 白屏兜底 |
+| ✅ | **Dashboard 拆分** | projects/eink-dashboard/，同仓库独立项目，proxy 到 Pi API |
+| ✅ | **Phosphor 图标集成** | Regular/Fill 字体入库，状态栏保留手绘像素图标 |
+| ✅ | **Squash 合并到 main** | 23 次探索提交 → 1 个 commit (`2302f24`) |
+| 🔵 | **eink-dashboard Docker 部署** | Dockerfile + docker-compose，部署到内网 Docker 主机 |
+| ⚪ | tap 长按软关机带 goodbye 画面 | eink-status 已有 tap 路由，只是 action map 未填 |
+| ⚪ | 真机 PNG 跟浏览器渲染 diff 工具 | dashboard 上加"高亮像素差异"模式 |
+| ⚪ | 更多页面模板 | Docker 容器列表 / 自定义信息 |
 
 ## 不会走回头路的几条死路
 
@@ -312,10 +335,12 @@ PNG 大小（Pi 上）：
 - ❌ **`pisugar-server-py` 0.1.1**：库本身的事件解析 bug 没修，PiSugar TCP 协议处理不当（详见根目录 CLAUDE.md "已知坑" 第 2 条）
 - ❌ **Web dashboard 跑 Pi**：违反"Pi 自治、dashboard 是可选远程工具"的设计
 - ❌ **dashboard 缓存历史数据**：用户明确说不存历史，浏览器内存够
+- ❌ **Phosphor Fill 做小图标**：Fill 变体在 1-bit 下 <14px 糊成黑块，Regular（线条）≥10px 清晰
+- ❌ **Phosphor 替换状态栏图标**：WiFi 信号 / 电池电量在 4-8px 级别，手绘像素图标比任何字体图标都清晰
 
 ## 参考
 
-- 根目录 [`CLAUDE.md`](../../CLAUDE.md) "eink-render（探索中，正在落地到 Pi）" 章节有简化版
+- 根目录 [`CLAUDE.md`](../../CLAUDE.md) "eink-render（生产渲染管线）" 章节有简化版
 - `lib/vdom-to-ops.js` 顶部注释列了支持的 CSS 子集
 - `python/render_ops.py` 顶部注释列了支持的 ops 类型
 - `server.mjs` 顶部注释列了 HTTP API
