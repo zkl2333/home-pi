@@ -1,0 +1,321 @@
+# eink-render 探索日志
+
+> 这份是 `explore/satori-eink` 分支的复盘文档。记录**为什么是当前架构、怎么走过来的、有哪些死路**——以后看代码"看不懂为什么这样写"时回来翻。
+
+**一句话总结**：想用 CSS flexbox 写 250×122 墨水屏布局，输出真 1-bit PNG。绕了 5 圈才落到「JSX → Yoga → ops JSON → Python PIL FreeType MONO → 1-bit PNG」+ Pi 上 Hono server 提供 HTTP API。
+
+---
+
+## 时间线
+
+| 阶段 | commit | 大事记 |
+|---|---|---|
+| 1. Satori 起步 | `833801d` | VPS 上 JSX + CSS → Satori → SVG → sharp 1-bit。**真机字模糊**。 |
+| 2. 渲染管线 pivot | `6829a15` | 抛弃 Satori 的 SVG 光栅化，引入 Yoga + Python PIL，HTML 字符串模板。 |
+| 3. Pi 装 Node.js | `86506d7` | 固化 v22.22.2（armv7l 最后官方 LTS）到 `bootstrap.sh`。 |
+| 4. JSX 改造 | `d180c66` | HTML 字符串 → JSX，移除 `satori-html`。 |
+| 5. Python daemon 化 | `6e53b6a` | Python 子进程长期保活，单次 400ms → 10ms。 |
+| 6. 落地 Pi（代码） | `48421bd` | 搬到 `projects/eink-render/`，加 Hono HTTP server + systemd。 |
+| 7. Pi 实际跑通 | `ffcd1c7` | bringup 脚本 + setup-font 三级 fallback，6 页 PNG 真机渲染跟本机像素一致。 |
+
+---
+
+## 关键决策点
+
+### D1：为什么不能用 Satori → SVG 路线
+
+**Context**：墨水屏只有黑白两种像素（无灰、无 AA），任何中间灰像素都会让"屏看上去脏"——尤其文字。
+
+**试过**：
+- Satori → resvg 默认（AA + 后续阈值化）：灰边一堆
+- Satori → resvg `shape-rendering: crispEdges`：灰边没了但**小字号笔画消失**
+- Satori → 2× supersample + Otsu threshold：缓解但治标不治本
+- Pi 端 `PIL.convert('1', dither=NONE)` 保险层：避免双重抖动，但 sharp 输出根本不是真 1-bit
+
+**根因**：Satori 用 opentype.js 读字形轮廓，每个字符是浮点坐标的 Bezier path（实测见 `d="M13.1 11.0L13.1 11.0Q13.1 12.2 12.9 13.2…"`）。任何 SVG 光栅化（librsvg / resvg / Cairo / sharp）在 250×122 像素网格上画这种浮点曲线，**没 hinting 就只能给灰边**——一根 1px 笔画落在 x=10.3 时 70/30 分到相邻两像素。阈值化必死一边或两边模糊。
+
+**结论**：**SVG-rasterize 路线是死结**。文字必须走带 hinting 的字形光栅化器（FreeType MONO 是最自然选择）。
+
+### D2：为什么用 Python PIL 而不是 node-canvas
+
+**Context**：决定走 FreeType 后，FreeType MONO 模式（每像素直接 0/1，自动 hint）是必经之路。Node 端有 `canvas` 包封装 Cairo，能配 `antialias='none'`。
+
+**试过**：
+- node-canvas + Cairo MONO：输出确实是 0/255 纯黑白
+- 但 **Windows 上 node-canvas 的 fontconfig / Pango 注册不稳定**，dev 预览跟 Pi 实机渲染像素不一致
+- node-canvas Cairo 的"硬阈值化"也不如 PIL hint 好看
+
+**结论**：Python PIL `mode='1'` + `ImageDraw.text()` 自动走 FreeType MONO。Pi 上 PIL 现成（eink-status 已经在用），跨平台一致。
+
+### D3：保留 CSS 编写体验 = Yoga 独立布局
+
+**Context**：手写绝对坐标在墨水屏上能搞定，但写起来痛——eink-status 原版 `render.py` 就是 imperative PIL，加一行布局元素都得重排所有坐标。
+
+**方案**：把布局和绘制解耦。
+- **布局**：用 Yoga（Facebook flexbox 引擎），跟 React Native 同款，纯 JS/wasm，跨平台
+- **绘制**：用 PIL（解决 D2）
+
+**桥接**：自己 walk vnode 树构建 Yoga 节点 → `calculateLayout` 算出每个节点的绝对坐标 → 再 walk 一遍发射 ops JSON（rect/text/ellipse/line/pixels），喂给 Python。
+
+### D4：HTML 字符串 → JSX
+
+**Context**：第一版 pivot 后用 `satori-html` 把 HTML 模板字符串 parse 成 vnode（保留 Satori 时期的编写体验）。但只用了它的 parser，Satori 生态其它都丢了——**纯历史包袱**。
+
+**换 JSX 收益**：
+- 零运行时 parse（编译期 `_jsx()` 直接构造对象）
+- 字符串插值自动转义（HTML 模板里出现 `<` 会破布局，JSX 不会）
+- 跟 `src/App.jsx` 预览面板用一套写法
+
+**代价**：lib/ 加 `react` 这一个 runtime dep（仅 `react/jsx-runtime`，不挂 DOM 不调和不 hooks），CLI 加 `tsx` 做 JSX 转译。`react` 体积小、tsx 不影响 prod 运行（npm install --omit=dev 之后才装 tsx 是 dep 不是 devDep——见 D7）。
+
+### D5：vdom 一次性 normalize 而不是惰性展开
+
+**Context**：JSX 里有三种非 host 节点会让 vdom-to-ops 挂掉：
+- 函数组件（`<Page>`、`<StatusBar>`）：`vnode.type` 是函数引用，不是字符串
+- Fragment（`<>...</>`）：`vnode.type` 是 Symbol(react.fragment)
+- 嵌套数组、`false`、`null`、空字符串
+
+**第一版试过**：在 `buildYogaTree` 和 `emitOps` 各自的 children walker 里调 `expand(vnode)`。
+
+**翻车**：函数组件**每次调用返回新的 vnode 实例**——`buildYogaTree` 给实例 A 写 `__inherited`/`__text`，`emitOps` walk 时拿到的是实例 B，读不到。
+
+**解法**：入口先做一次性 `normalizeTree`，把整棵 JSX 树压成 host-only 树（`type` 全是字符串、`children` 全是扁平数组）。下游 walker 直接读 `vnode.props.children`，稳定可靠。
+
+### D6：Python daemon 化
+
+**Context**：第一版每次 render 都 `spawn` 新的 Python 进程，冷启 ~370ms。Pi 上更慢，且字体每次重新加载。
+
+**方案**：Python 端加 `--daemon` 模式，长期保活；按行读 JSON 请求、length-prefix 写 PNG 响应。
+- 请求：一行 JSON + `\n`
+- 响应：成功 `OK <len>\n` + len 字节 PNG；失败 `ERR <message>\n`
+
+**字体缓存**：从 `render()` 函数局部抽到模块级 `_DAEMON_FONT_CACHE`，跨请求保活。**key 用 path 而非 name**（避免相同 name 映射到不同字体路径时缓存冲突）。
+
+**实测**（Win Python 3.14）：
+- 首张：~1.5s（进程启动 + 字体加载）
+- 后续：~10ms/页（layout 2-6ms + PIL 3-7ms）
+
+**Node 端**：`ensureDaemon()` 保活，stdout 解析按状态机走（`header` ↔ `payload`），FIFO 队列对应 in-flight 请求。CLI 单次跑完要 `shutdownPythonDaemon()` 主动关，否则 Node event loop 等不到 stdin 关闭、进程不退。
+
+### D7：tsx 是 dep 不是 devDep
+
+**Context**：Pi 上 `server.mjs` import `renderer.jsx`，必须有 JSX 转译。两条路：
+- A. Pi 上跑 `tsx` 实时转译
+- B. 开发机预 build 成 .js，Pi 上跑编译产物
+
+**选 A**：B 加一层 build 步骤，devops 复杂度上升，收益（启动稍快、不依赖 tsx）不大。tsx 才几 MB。
+
+**配置**：`tsconfig.json` 设 `"jsx": "react-jsx"` 让 tsx 走 automatic runtime（否则默认 classic 需要 `import React`）。Vite 那边 `@vitejs/plugin-react` 自带 automatic，两边一致。
+
+### D8：dashboard 不上 Pi，部署在内网 Docker
+
+**Context**：Pi Zero 2W 512MB RAM，资源紧。Pi 又要保持"自治"（断网照常刷屏）。
+
+**选项对比**：
+| 方案 | 优 | 劣 |
+|---|---|---|
+| Dashboard 跑 Pi | 真正自治、数据本地 | RAM 紧、SD 卡历史数据有寿命压力 |
+| Dashboard 跑 VPS | 资源不愁 | 数据上云、Pi 主动推、跨网络反模式 |
+| **Dashboard 跑内网 Docker** | 资源不愁、不依赖外网 | 需要内网另一台机器 |
+
+**用户决策**：内网 Docker，Pi **不依赖** dashboard 运行，dashboard 是"远程工具"性质。**Pi 不存历史数据**——dashboard 想看趋势自己在浏览器内存里存。
+
+**Pi 端接口**：
+- `POST /api/render` —— 内部，eink-status 调
+- `GET /api/render?page=...` —— dashboard / dev 调，返 PNG
+- 数据走独立接口（待 eink-status 实现 HTTP 端点）
+
+### D10：bringup 单独脚本，不直接走 bootstrap.sh
+
+**Context**：CLAUDE.md 约定 `projects/<name>/install.sh` 由 bootstrap.sh 第 7 步自动捡。理论上推到 Pi 后 `bash bootstrap.sh` 即可。
+
+**为啥另起 `scripts/pi-bringup.sh`**：
+- 首次部署想**精确控制**：只装 eink-render，不重跑整个 bootstrap（apt update / e-Paper SDK / PiSugar 升级都很慢，且没必要）
+- 自带**验证步骤**：health check + curl 拉 6 张 PNG 回本机肉眼对比
+- 失败回滚命令打在最后，一键卸载
+
+**关系**：bringup 是开发期工具，bootstrap.sh 是新机一键复盘。bringup 验证过了，下次新 Pi 走 bootstrap.sh 路径会自动包含 eink-render。
+
+### D9：PNG 镜像走 PNG，不传 vdom 树
+
+**用户问**：能不能传 vdom 树（"像 SSR"）让浏览器自己渲染屏幕镜像？
+
+**结论：不行**。
+- **大小没省**：vdom JSON ~1.5-2KB；1-bit PNG ~600B 实际，base64 后 ~800B
+- **"像不像"差很多**：浏览器 AA / sub-pixel rendering / 字体度量不同，渲染出来跟墨水屏 PIL FreeType MONO 视觉差异很大——不算镜像
+- **方案**：dashboard 主显示 PNG（所见即所得），可选附带 vdom 给 dev 调试用
+
+---
+
+## 踩过的坑
+
+### P1：`satori-html` 在我们场景下是包袱
+原本是为了保留 HTML+CSS 编写体验。换 JSX 后这层 parser 是死代码，移除。
+
+### P2：函数组件每次调用返回新实例
+JSX 编译后 `<MyComp ... />` 是 `_jsx(MyComp, props)`，运行时 `_jsx` 返回 `{ type: MyComp, props }` 但**不调用** MyComp。两次 walker 各自展开会拿到两个不同实例——`__inherited`/`__text` 挂歪。解法：一次性 normalize 见 D5。
+
+### P3：Windows `python.exe` 是 Store 占位符
+`spawn('python', ...)` 在 Windows 上常解析到 `WindowsApps\python.exe`——空可执行，调用静默退出 9009。本机调试必须 `PYTHON_BIN=py` 覆盖。Pi 上 `python` 走系统 python3，无需设置。
+
+### P4：CLI 单次跑完 daemon 留尾巴
+Python daemon 是 long-running 子进程，`render.mjs` 单次跑完写完 PNG 后，Node event loop 因为子进程 stdin 还连着不退出。解法：`shutdownPythonDaemon()` 在 finally 里调，主动 kill。
+
+### P5：font cache key 不能只用 name
+原来 `(name, size)` 做 key，daemon 模式下如果两次请求传不同 `fonts_map`（相同 name 映射到不同字体路径），缓存会错挂。改成 `(path, size)`。
+
+### P6：Node v24+ 没有 armv7l 官方包
+Pi Zero 2W 是 armv7l 32 位。官方在 v24 把 armv7 从 Tier 1 降为 Experimental（[commit 6682861d](https://github.com/nodejs/node/commit/6682861d6f)）、不再发布预编译包。**v22.22.2 是最后一个有官方 armv7l 预编译包的 LTS**。
+
+### P7：Vite dev server 在 Windows 下后台进程不易清理
+背景启动的 `vite dev` 在测试结束后不会自动退出，下次 `git mv` 因为文件句柄占用会报 Permission denied。需要按 PID 精确杀掉，**不要** `taskkill /F /IM node.exe`（会误杀其它 node 进程）。
+
+### P8：Pi 上 `github.com:443` 被屏蔽，字体下载会 ETIMEDOUT
+首次 bringup 时 `setup-font.mjs` 直接 fetch `github.com/anthonyfok/...` 卡 30s 超时（根目录 CLAUDE.md "已知坑 4" 已记）。解法是三级 fallback：
+1. 复用系统 `/usr/share/fonts/truetype/wqy/wqy-microhei.ttc`（bootstrap.sh 第 1 步 apt 装 `fonts-wqy-microhei` 已经提供）
+2. `cdn.jsdelivr.net`（Cloudflare 可达）
+3. github.com 原站（兜底，主要给开发机用）
+
+**规律**：Pi 上任何依赖直接拉 GitHub 资源的脚本都要按这套兜底逻辑设计，**别假定 github.com 通**。`api.github.com` 走 Cloudflare 可达（authorized_keys 同步用的就是它）。
+
+---
+
+## 当前架构
+
+```
+开发机（Windows + git-bash）
+   │
+   │ scripts/deploy.sh / bootstrap.sh
+   ▼
+Pi (zero2w.local)
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  eink-status (Python daemon)        [现有，未改造]        │
+│    ├ PiSugar 数据采集                                    │
+│    ├ tap 事件（单击/双击/长按）                           │
+│    └ e-Paper 屏驱动                                      │
+│                                                         │
+│  eink-render (Node + Hono on :8787)  [新加]              │
+│    │                                                    │
+│    ├ POST /api/render  (eink-status 调，传数据回 PNG)    │
+│    ├ GET  /api/render?page=...  (dashboard/dev)         │
+│    └ Python daemon（stdin 流，长期保活）                  │
+│        └ render_ops.py（PIL mode='1' + FreeType MONO）   │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+   ▲
+   │ HTTP（内网，可选反代/Tailscale）
+   │
+内网 Docker 主机
+┌─────────────────────────────────────────────────────────┐
+│  dashboard (跨仓库，独立项目)            [TODO]           │
+│    ├ 前端：屏幕镜像 / 状态 / 控制                          │
+│    └ 后端：纯代理 Pi API，无状态、无 DB                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 渲染管线（细化）
+
+```
+JSX 模板（lib/renderer.jsx 的 Overview/System/... 组件）
+   ↓  React 自动运行时（_jsx 构造 { type, props }，不挂 DOM、不 reconcile）
+vnode 树（含函数组件 + Fragment + 嵌套数组）
+   ↓  lib/vdom-to-ops.js : normalizeTree()
+host-only 树（type 全是字符串、children 扁平数组）
+   ↓  buildYogaTree() : Yoga useWebDefaults + flexbox 子集
+Yoga 树 + calculateLayout()
+   ↓  emitOps() : walk 第二遍
+ops JSON ({op:rect/text/ellipse/line/pixels, x,y,...})
+   ↓  stdin 一行 JSON
+Python daemon (render_ops.py daemon_loop())
+   ↓  PIL Image.new('1', ...) + ImageDraw + FreeType MONO
+1-bit PNG (mode='P' 2-color palette, extrema 严格 (0,255))
+   ↓  HTTP body / stdout
+消费者（eink-status / dashboard）
+```
+
+## Pi 实测（首次 bringup）
+
+代码搞定后的第一次真机部署。**没动 eink-status、没推屏**——eink-render server 被动 listen，靠从开发机 `curl http://127.0.0.1:8787/api/render?page=...` 拉 PNG 回本机肉眼验证。
+
+### 流程（`scripts/pi-bringup.sh <ip>` 自动跑）
+1. ssh 检查 node v22.22.2 / python 3.9.2 / eink-status 仍 active
+2. `tar` 推 `projects/eink-render/` 到 Pi（约 4MB，排除 `node_modules` / `fonts/` / `output-*.png`）
+3. Pi 上 `install.sh`：
+   - 字体三级 fallback（P8）→ 复用系统 ttc，秒过
+   - `npm install --omit=dev` → 11 包，12 秒
+   - 装 systemd unit → enable + start
+4. 健康检查：`/api/health` 一次就过
+5. curl 6 张 PNG 拉回本机
+
+### 跨平台一致性
+开发机（Windows + Python 3.14）渲染的 PNG 跟 Pi（armv7l + Python 3.9.2）渲染的 PNG **逐像素一致**——FreeType MONO 跨平台 hint 一致、Yoga 布局一致、wqy-microhei 字体度量一致。这是 D2「PIL 是必经之路」选择的关键回报：dev/prod 不会出"开发机好看上屏花"的惊喜。
+
+PNG 大小（Pi 上）：
+
+| 页 | 大小 |
+|---|---|
+| overview | 1152 B |
+| system | 987 B |
+| power | 849 B |
+| calendar | 1003 B |
+| weather | 769 B |
+| news | 1679 B |
+
+### 资源占用（Pi 上 systemd 视角）
+- Main PID: `npm exec tsx server.mjs`
+- Tasks: 43（npm → tsx → Node → Python daemon → 几个 worker thread）
+- CPU 累计（启动 + 6 次渲染）: ~13s 钟级
+- 内存：未到 `MemoryMax=180M` 上限。具体数字待长跑后再补
+- 启动到 ready: ~2s（systemd "Started" 到 `/api/health` 200）
+
+### 还没做的
+- 长跑观察（一晚 / 一天）看内存泄漏、Python daemon 是否会死
+- 真机推屏（按用户要求暂缓）—— eink-status 当前还是自己 imperative PIL 绘制
+- 完整覆盖 bootstrap.sh 第 7 步路径（理论上 bringup 验证过，bootstrap 也会过；新机重装时再验证）
+
+## 性能数据
+
+测试环境：Windows Python 3.14 + Node 22。Pi Zero 2W 可能比这慢 2-3 倍但量级一致。
+
+| 阶段 | 冷启（首张） | 热路径（后续） |
+|---|---|---|
+| JSX → vnode（_jsx） | <1ms | <1ms |
+| normalize | <1ms | <1ms |
+| Yoga 布局 | 15-20ms | 2-6ms |
+| emitOps | <1ms | <1ms |
+| Python 进程启动 + PIL import + 字体加载 | ~1.4s | 0（daemon 复用） |
+| PIL 绘制 + PNG 编码 | ~10ms | 3-7ms |
+| **total** | **~1.5s** | **6-13ms** |
+
+输出 PNG 大小：~600-1200B（取决于内容复杂度）。
+
+---
+
+## 待办 / 未来方向
+
+按依赖链：
+
+| 优先级 | 任务 | 备注 |
+|---|---|---|
+| 🔵 Step 4 | **改 eink-status 调 eink-render `/api/render`** | 删 imperative PIL 6 页绘制，改 HTTP 拉 PNG。失败兜底：本地极简 fallback 页（"render server down"） |
+| 🔵 Step 5 | **Dashboard（跨仓库 Docker 项目）** | 屏幕镜像（SSE 推 PNG）/ 状态数据 / 远程切页 / 日志 tail |
+| ⚪ 待真机 | **真机视觉验证** | 远程开发看不见屏，先靠 PNG 看。最终上线前需在屏上确认字号、对齐 |
+| ⚪ 长尾 | tap 长按软关机带 goodbye 画面 / 双击切页 | eink-status 已有 tap 路由，只是 action map 未填 |
+| ⚪ 长尾 | 真机 PNG 跟浏览器渲染 diff 工具 | dashboard 上加"高亮像素差异"模式 |
+
+## 不会走回头路的几条死路
+
+- ❌ **再用 Satori 光栅化**：浮点 Bezier 无 hinting，墨水屏小字必糊
+- ❌ **再用 node-canvas**：Windows fontconfig 不稳，跨平台一致性差
+- ❌ **再用 satori-html**：JSX 后唯一收益是"能解析 HTML 字符串"，不需要
+- ❌ **`pisugar-server-py` 0.1.1**：库本身的事件解析 bug 没修，PiSugar TCP 协议处理不当（详见根目录 CLAUDE.md "已知坑" 第 2 条）
+- ❌ **Web dashboard 跑 Pi**：违反"Pi 自治、dashboard 是可选远程工具"的设计
+- ❌ **dashboard 缓存历史数据**：用户明确说不存历史，浏览器内存够
+
+## 参考
+
+- 根目录 [`CLAUDE.md`](../../CLAUDE.md) "eink-render（探索中，正在落地到 Pi）" 章节有简化版
+- `lib/vdom-to-ops.js` 顶部注释列了支持的 CSS 子集
+- `python/render_ops.py` 顶部注释列了支持的 ops 类型
+- `server.mjs` 顶部注释列了 HTTP API

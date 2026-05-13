@@ -2,10 +2,10 @@
 """墨水屏状态显示常驻 daemon — 入口与线程编排。
 
 模块结构（同目录平铺，systemd WorkingDirectory 即 sys.path[0]）：
-- data.py     — PiSugar 命令通道 + 系统 metric + Snapshot
-- fetchers.py — 周期性外部数据获取（天气/新闻）
-- render.py   — 屏幕渲染（icon、状态栏、各页、PAGES 注册表）
-- screen.py   — ScreenController（EPD 设备、全/局刷判定）
+- data.py          — PiSugar 命令通道 + 系统 metric + Snapshot
+- fetchers.py      — 周期性外部数据获取（天气/新闻）
+- remote_render.py — 调 eink-render HTTP 服务（127.0.0.1:8787）拿 1-bit PNG
+- screen.py        — ScreenController（EPD 设备、全/局刷判定）
 
 事件驱动模型：
 - tap_listener：PiSugar 8423 长连接读 single/double/long 事件
@@ -23,7 +23,7 @@ import time
 
 import fetchers
 from data import (PISUGAR_HOST, Snapshot, changed_significantly, take_snapshot)
-from render import PAGES
+from remote_render import PAGE_IDS
 from screen import ScreenController
 
 POLL_INTERVAL = 10.0
@@ -102,9 +102,9 @@ def main() -> int:
             if kind == 'tap':
                 # 单击下一页、双击上一页、长按回首页
                 if payload == 'single':
-                    ctrl.current_page = (ctrl.current_page + 1) % len(PAGES)
+                    ctrl.current_page = (ctrl.current_page + 1) % len(PAGE_IDS)
                 elif payload == 'double':
-                    ctrl.current_page = (ctrl.current_page - 1) % len(PAGES)
+                    ctrl.current_page = (ctrl.current_page - 1) % len(PAGE_IDS)
                 elif payload == 'long':
                     ctrl.current_page = 0
                 ctrl.refresh(take_snapshot(), f'tap:{payload}:p{ctrl.current_page}')

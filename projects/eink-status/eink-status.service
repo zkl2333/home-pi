@@ -1,7 +1,7 @@
 [Unit]
 Description=e-paper status display daemon (event-driven)
-After=network-online.target pisugar-server.service
-Wants=network-online.target pisugar-server.service
+After=network-online.target pisugar-server.service eink-render.service
+Wants=network-online.target pisugar-server.service eink-render.service
 
 [Service]
 Type=simple

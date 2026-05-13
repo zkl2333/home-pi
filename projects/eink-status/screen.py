@@ -19,10 +19,9 @@ EPAPER_LIB = Path('/home/pi/e-Paper/RaspberryPi_JetsonNano/python/lib')
 sys.path.insert(0, str(EPAPER_LIB))
 
 from waveshare_epd import epd2in13_V3  # noqa: E402
-from PIL import Image  # noqa: E402
 
 from data import Snapshot  # noqa: E402
-from render import render  # noqa: E402
+from remote_render import render_remote  # noqa: E402
 
 ROTATE_180 = True
 PARTIAL_REFRESH_LIMIT = 60
@@ -41,8 +40,8 @@ class ScreenController:
         self.current_page = 0
 
     def _build_buffer(self, s: Snapshot):
-        img = Image.new('1', (self.epd.height, self.epd.width), 255)
-        render(img, s, self.current_page)
+        # eink-render 直接吐 250×122 mode='1' PNG，跟 epd buffer 尺寸一致
+        img = render_remote(self.current_page, s)
         if ROTATE_180:
             img = img.rotate(180)
         return self.epd.getbuffer(img)

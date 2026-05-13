@@ -1,0 +1,24 @@
+[Unit]
+Description=e-ink render server (JSX → 1-bit PNG via Yoga + Python PIL)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/projects/eink-render
+# tsx 转 JSX，dep 锁版本；Python daemon 由 lib/renderer.jsx 内部 spawn 保活
+ExecStart=/usr/local/bin/npx tsx server.mjs
+Restart=on-failure
+RestartSec=5
+Nice=10
+# 内网监听（LAN 信任域，dashboard 直接从开发机拉 /api/snapshot）。
+# 上公网/不可信网络改回 127.0.0.1 + 走反代。
+Environment=HOST=0.0.0.0
+Environment=PORT=8787
+# 512MB Pi Zero 2W 资源紧：超 150MB 就 OOM Kill 重启
+MemoryMax=180M
+
+[Install]
+WantedBy=multi-user.target

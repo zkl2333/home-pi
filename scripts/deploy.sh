@@ -4,7 +4,7 @@
 # 用法: bash scripts/deploy.sh <项目名> [--restart]
 set -euo pipefail
 
-PI_USER="pi"
+PI_USER="${PI_USER:-pi}"
 PI_HOST="${PI_HOST:-zero2w.local}"
 
 # Windows git-bash: 优先系统 ssh.exe（能用 1Password agent）
@@ -29,11 +29,14 @@ SRC="$(cd "$(dirname "$0")/.." && pwd)/projects/$NAME"
 [ -d "$SRC" ] || { echo "找不到 $SRC"; exit 1; }
 
 echo "推送 $SRC -> ${PI_USER}@${PI_HOST}:projects/$NAME"
-"$SSH" "${SSH_OPTS[@]}" "${PI_USER}@${PI_HOST}" "rm -rf projects/$NAME && mkdir -p projects/$NAME"
+# 不再 rm -rf —— 保留远端的 node_modules / fonts（deploy 不传它们，但每次都清掉
+# 会导致服务 crash loop。源码 tar 会覆盖文件，过期文件由项目自己清理或全量重装时再说）
+"$SSH" "${SSH_OPTS[@]}" "${PI_USER}@${PI_HOST}" "mkdir -p projects/$NAME"
 
 tar -C "$SRC" \
     --exclude='.git' --exclude='__pycache__' --exclude='*.pyc' \
     --exclude='node_modules' --exclude='.venv' \
+    --exclude='dist' --exclude='output-*.png' \
     -cf - . | \
 "$SSH" "${SSH_OPTS[@]}" "${PI_USER}@${PI_HOST}" "tar -xf - -C projects/$NAME"
 

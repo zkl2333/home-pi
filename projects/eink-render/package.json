@@ -1,0 +1,18 @@
+{
+  "name": "eink-render",
+  "private": true,
+  "type": "module",
+  "description": "墨水屏渲染管线：JSX → Yoga 布局 → Python PIL → 1-bit PNG HTTP 服务",
+  "scripts": {
+    "render": "tsx render.mjs",
+    "server": "tsx server.mjs",
+    "setup-font": "node scripts/setup-font.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.0.2",
+    "hono": "^4.12.18",
+    "react": "^18.3.1",
+    "tsx": "^4.19.2",
+    "yoga-layout": "^3.2.1"
+  }
+}

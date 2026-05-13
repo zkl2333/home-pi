@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "eink-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "projects/eink-render"],
+      "port": 5173,
+      "env": {
+        "PI_RENDER_URL": "http://192.168.31.27:8787"
+      }
+    }
+  ]
+}

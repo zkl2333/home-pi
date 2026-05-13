@@ -6,6 +6,17 @@ __pycache__/
 *.pyc
 .venv/
 
+# Node
+node_modules/
+
+# eink-render（Phosphor 字体入库，wqy 太大走 setup-font 下载）
+projects/eink-render/fonts/wqy-microhei.*
+projects/eink-render/output-*.png
+projects/eink-render/dist/
+
+# eink-dashboard
+projects/eink-dashboard/dist/
+
 # IDE
 .idea/
 .vscode/
@@ -20,3 +31,4 @@ Thumbs.db
 *.local.json
 local/
 
+pi-bringup-output/
