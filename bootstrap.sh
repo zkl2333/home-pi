@@ -60,6 +60,23 @@ sudo apt-get install -y \
     i2c-tools
 
 
+# ─── 1.5. Node.js（官方 armv7l 预编译包） ──────────────────────────────────
+# 锁定 v22.22.2：v24 起官方将 armv7l 降为 Experimental、停止发布预编译包，v22 是最后有官方包的 LTS。
+# 升级时改 NODE_VER 即可。
+NODE_VER=22.22.2
+NODE_ARCH="armv7l"
+log "安装 Node.js v${NODE_VER}（官方 armv7l 预编译包）"
+if node --version 2>/dev/null | grep -q "^v${NODE_VER}"; then
+  echo "Node.js 已是 ${NODE_VER}，跳过"
+else
+  echo "安装 Node.js v${NODE_VER}"
+  wget -q --show-progress -O /tmp/node.tar.xz \
+    "https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-linux-${NODE_ARCH}.tar.xz"
+  sudo tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+  rm -f /tmp/node.tar.xz
+  node --version && npm --version
+fi
+
 # ─── 2. 启用 SPI / I2C ────────────────────────────
 log "启用 SPI / I2C（如未启用）"
 sudo raspi-config nonint do_spi 0 || true
