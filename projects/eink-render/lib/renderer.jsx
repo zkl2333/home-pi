@@ -13,6 +13,11 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { vdomToOps } from "./vdom-to-ops.js";
+import { renderToPng } from "./raster.mjs";
+
+// 渲染后端：node = 纯 Node FreeType-WASM 光栅（默认，已退役 Python）；
+// python = 旧 PIL daemon（仅 parity 对齐用，RENDER_BACKEND=python）
+const RENDER_BACKEND = process.env.RENDER_BACKEND || "node";
 
 export const WIDTH = 250;
 export const HEIGHT = 122;
@@ -799,7 +804,7 @@ export async function render(params, pageId) {
   const spec = vdomToOps(vnode, { width: WIDTH, height: HEIGHT, fonts: FONTS });
   const t1 = performance.now();
 
-  const png = await pyRender(spec);
+  const png = RENDER_BACKEND === "python" ? await pyRender(spec) : await renderToPng(spec);
   const t2 = performance.now();
 
   return {
