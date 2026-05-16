@@ -127,6 +127,8 @@ FreeType-WASM 不再自编单 MONO 切片，改为消费独立通用库 [`zkl233
 
 8. **~~render.py 字体陷阱~~**（已废弃）：旧 `render.py` 已删除，渲染由 eink-render 接管。eink-render 只用 wqy-microhei（全字符集）+ Phosphor（图标），不存在 mono/CJK 字体混用问题。
 
+9. **`battery_i`（瞬时电流）恒为 0，不可用**：充电、放电都读不到，不是"没插电才读不到"。**2026-05-17 纯放电态实锤**（PiSugar 3 / 固件 v1.3.4）：连续 8 次采样 `battery_i: 0` 一动不动，而**同源 ADC 的 `battery_v` 每次都报真实抖动值**（3.797~3.810V）、`battery` 百分比正常波动、`battery_charging`/`battery_power_plugged` 均 `false`；`i2cdetect` 确认 `0x57`（PiSugar 芯片）在线、`0x68=UU`（ds3231 被内核占用）。机理判断：电压同源 ADC 正常 ⇒ 排除"软件解析 bug / I2C 链路坏";`battery_i` 这条命令在 pisugar-server 协议里是存在的 ⇒ 是固件那头不给;症状与坑 7 完全同指纹（接口在、值恒定无效）⇒ **指向 v1.3.4 固件不上报电流**。底层有无分流电阻+ADC 采样电路无法外部证实（原理图未公开、固件闭源），但**实际后果等价于硬件不支持：不可修、不可绕**（cdn 固件就是 v1.3.4，见坑 7）。因此电池 ETA 改用 30 分钟历史电量样本算速率（`eink_status.py` 的 `data._estimate_battery_eta`）是绕开死路的**唯一正解**，不是次优——**永远不要回退到瞬时电流，不要在 bootstrap / 代码里依赖 `battery_i`**。
+
 ## TODO 候选（按性价比）
 
 - eink-dashboard 部署到 Docker 主机（Dockerfile + docker-compose）
