@@ -4,6 +4,9 @@
 # 不在本机直接跑（本机无 emcc）。
 set -euo pipefail
 
+# 脚本所在绝对目录（后面会 cd 进 FreeType 源，不能再靠 $0/相对路径找 glue.c）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 FT_VER="${FT_VER:-2.13.3}"
 OUT_DIR="${OUT_DIR:-/out}"
 WORK="${WORK:-/tmp/ftbuild}"
@@ -32,9 +35,8 @@ emmake make -C build -j"$(nproc)" freetype
 FT_LIB="$PWD/build/libfreetype.a"
 FT_INC="$PWD/include"
 
-cd "$WORK/.."
 echo ">>> 链接 glue + libfreetype → freetype-mono.mjs/.wasm"
-emcc "$(dirname "$0")/glue.c" "$FT_LIB" \
+emcc "$SCRIPT_DIR/glue.c" "$FT_LIB" \
   -I"$FT_INC" \
   -O3 \
   -sMODULARIZE=1 \
