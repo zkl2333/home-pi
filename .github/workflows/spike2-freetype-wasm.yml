@@ -1,0 +1,43 @@
+# spike#2：CI 里编自家 freetype-mono.wasm 并验证（含原 OOM 的 4.4MB+ CJK）。
+# 探索性，非生产管线。push 到 spike 路径 或 手动 dispatch 触发。
+name: spike2-freetype-wasm
+on:
+  push:
+    paths:
+      - "spike2-freetype-wasm/**"
+      - ".github/workflows/spike2-freetype-wasm.yml"
+  workflow_dispatch: {}
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    container: emscripten/emsdk:3.1.74
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 cmake
+        run: apt-get update && apt-get install -y --no-install-recommends cmake
+
+      - name: 拉 CJK 字体 .ttc（仓库里 gitignored；FreeType 直接吃 ttc）
+        run: |
+          curl -fL "https://cdn.jsdelivr.net/gh/anthonyfok/fonts-wqy-microhei@master/wqy-microhei.ttc" \
+            -o spike2-freetype-wasm/wqy-microhei.ttc
+          ls -la spike2-freetype-wasm/wqy-microhei.ttc
+
+      - name: 编 freetype-mono.wasm
+        working-directory: spike2-freetype-wasm
+        run: OUT_DIR="$PWD/out" bash build.sh
+
+      - name: Node 验证（含之前 OOM 的 CJK 用例）
+        working-directory: spike2-freetype-wasm
+        run: |
+          node --version
+          node test.mjs
+
+      - name: 上传 wasm 产物 + 渲染 PNG
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike2-freetype-wasm
+          path: |
+            spike2-freetype-wasm/out/*
+            spike2-freetype-wasm/spike2-out-*.png

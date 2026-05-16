@@ -164,6 +164,37 @@
 - **"像不像"差很多**：浏览器 AA / sub-pixel rendering / 字体度量不同，渲染出来跟墨水屏 PIL FreeType MONO 视觉差异很大——不算镜像
 - **方案**：dashboard 主显示 PNG（所见即所得），可选附带 vdom 给 dev 调试用
 
+### D12：测量/渲染的单一真相源 —— 三种架构调研
+
+**Context**：anchor 居中修复暴露的根问题：**字体度量被劈成两个不一致的源**。布局在 JS（Yoga），测量靠 `measureText` 拍脑袋（ASCII×0.55）；真正画字在 Python（PIL/FreeType MONO，精确）。所有居中/换行/ellipsis 偏差都源于此。字宽表（含按 fontFamily 标定）治标——对 CJK 等于要枚举几万字，已否决。第一性原理：**测量必须与渲染同源**（浏览器之所以无此问题，是布局引擎直接问字体、且测量与光栅是同一字体同一引擎）。
+
+**三条路：**
+
+1. **单进程·Python 端布局（yoga-py）**：JSX 只作者书写，未布局树序列化给 Python，Python 端 Yoga + measureFunc 直接用正在画字的 FreeType 量。**调研否决**：
+   - `pyyoga`/`yoga-python` 要 Python ≥3.10/3.12，Pi 是 3.9.2；且无 armv7l wheel（`yoga-python` 仅 aarch64）。
+   - `poga`（唯一 Py 版本可行）：sdist 自带 vendored Yoga（编译不用联网，✓），`YGNodeSetMeasureFunc` 也暴露（✓）——**但 vendored 的是老 Yoga ~1.x，全树无 `gap`/`Gutter`/`columnGap`**（gap 是 Yoga 2.0 才加）。我们每页重度用 gap、JS 端是 yoga-layout 3.2.1。用它＝gap 全失效 + 引入"Python 老 Yoga / JS 新 Yoga"两个版本，反而比字体度量分裂更糟；还要 512MB Pi 上 pybind11 源码编译。
+
+2. **单进程·Node 端绘制（FreeType-in-Node）**：保留 JS Yoga 3.2.1（gap ✓，无 poga 问题），在 Node 里同时做测量（精确 advance）和光栅（MONO），退役 Python/PIL。**调研可行**：
+   - 决定性约束：光栅器必须**原生出 hinted 1-bit（FreeType MONO）**。任何 AA→阈值引擎（Skia=`@napi-rs/canvas`、Cairo=`canvas`、`resvg`、`opentype.js`/`fontkit` 轮廓填充）都重演 Satori 小字 CJK 糊的死路——即使 `@napi-rs/canvas` 有 `linux-arm-gnueabihf`(armv7l) 预编译，Skia 文字仍 AA，淘汰。
+   - `freetype2`（node-freetype2，N-API，贴近原生 FreeType API）：能 `FT_RENDER_MODE_MONO` + 取精确 advance，与 PIL 同源、单引擎在 Node。代价：原生 addon，需 armv7l 预编译或 Pi 上 node-gyp 编译（apt `libfreetype6-dev`+g++，小 addon、512MB 可行，远轻于 pybind11/Yoga）；跨平台像素一致需验证（但本项目已证 FreeType-MONO Win/Pi 逐像素一致，同源应同）。
+   - `freetype-wasm`：纯 WASM（跨平台逐像素一致、零原生编译、可入库不联网），架构上最优；但 v0.0.4、2022 起停滞、API 自述"未暴露全部"、面向 browser/Deno——MONO bitmap/metrics 表面未验证，需 spike/fork。
+
+**结论 / 方向**：单一真相源的优雅解不必"把布局搬去 Python"——可"**把绘制搬来 Node**"：JS Yoga（成熟、有 gap）+ Node 端 FreeType-MONO 同时供测量与光栅，一举消除"测量分裂"和"JS↔Python 序列化缝"，Python/PIL 管线退役。
+
+#### D12 spike 结果（`spike-freetype-wasm/`，仓库根，不在 projects/ 故不部署）
+
+用 stock `freetype-wasm@0.0.4` 在 Node 实测，**架构基本面全绿**：
+
+- **Node 集成**（风险#1解）：ESM 下需 `globalThis.__dirname`+`globalThis.require` 垫片、`pathToFileURL` 动态 import、传 `Module.wasmBinary`。配方有效，启动 ~30ms。
+- **真 MONO**（命门，证实）：`FT_LOAD_RENDER|FT_LOAD_TARGET_MONO` 渲出的字形 **alpha 通道严格 0/255、零灰**——真 hinted MONO，非 AA。
+- **测量同源**：advance 与 PIL/FreeType **逐数字一致**（Archivo Black @64px：数字 43、冒号 21、合计 193）。
+- **端到端**：自写 JS compositor + 零依赖 PNG 编码渲出 crisp "15:04",无糊。
+- 集成坑（已解，非阻断）：imagedata 是 `(0,0,0,alpha)`——字形在 **alpha 通道**不是 RGB；imagedata 是 Emscripten 堆视图，**须逐字形立刻拷出**（跨后续 FT 调用会失效）。
+
+**唯一阻断（仅 stock 产物，非方案）**：stock 预编译 .wasm 加载 4.4MB wqy CJK 字体 **`Aborted(OOM)`，且 JS `INITIAL_MEMORY=256MB` 覆盖无效**（非增长构建/内存上限焊死）。CJK 是本项目正文主体 → **stock 包生产不可用**。
+
+**收敛结论**：纯 Node 路（JS Yoga 不动 + FreeType-WASM MONO 供测量+光栅、退役 Python）在每个基本面都成立，唯一阻断是 stock wasm 的 CJK 内存上限——即两轮前已标注的"自编最小 FreeType-WASM"兜底。spike 把它从"可能要"变成"**必须且明确值得**(其余全绿)"。**下一步 = spike#2**：Emscripten 自编最小 FreeType-WASM——`-sALLOW_MEMORY_GROWTH=1`（吃下 4.4MB CJK）+ 直接导出 1-bit `bitmap.buffer`（免 RGBA ImageData 往返与堆视图失效）+ 最小导出面；GitHub CI 构建，.wasm 入库（同字体）。**生产迁移未实施**——方向已验证。
+
 ---
 
 ## 踩过的坑
@@ -331,6 +362,7 @@ PNG 大小（Pi 上）：
 
 - ❌ **再用 Satori 光栅化**：浮点 Bezier 无 hinting，墨水屏小字必糊
 - ❌ **再用 node-canvas**：Windows fontconfig 不稳，跨平台一致性差
+- ❌ **Node 端 AA 光栅器（Skia=`@napi-rs/canvas` / Cairo / `resvg` / opentype.js 轮廓填充）**：文字 AA→阈值化＝Satori 小字 CJK 糊的同一死路。Node 绘制只走 FreeType-MONO（`freetype2` / `freetype-wasm`），见 D12
 - ❌ **再用 satori-html**：JSX 后唯一收益是"能解析 HTML 字符串"，不需要
 - ❌ **`pisugar-server-py` 0.1.1**：库本身的事件解析 bug 没修，PiSugar TCP 协议处理不当（详见根目录 CLAUDE.md "已知坑" 第 2 条）
 - ❌ **Web dashboard 跑 Pi**：违反"Pi 自治、dashboard 是可选远程工具"的设计
