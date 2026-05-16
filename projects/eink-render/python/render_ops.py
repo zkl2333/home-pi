@@ -104,7 +104,21 @@ def render(spec: dict, font_cache: dict[tuple, ImageFont.FreeTypeFont] | None = 
                 continue
             font = load_font(op, font_cache, fonts_map)
             fill = color_to_fill(op.get('fill', 'black'), 0)
-            d.text((int(op['x']), int(op['y'])), text, font=font, fill=fill)
+            tx = int(op['x'])
+            ty = int(op['y'])
+            h = op.get('h')
+            w = op.get('w')
+            if h is None:
+                d.text((tx, ty), text, font=font, fill=fill)
+            elif op.get('align') == 'center' and w is not None:
+                # 盒心水平+垂直居中：盒心由 flex 居中保证 == 容器中心，
+                # 与 JS 估宽误差无关，故水平真居中无需精确测宽。
+                d.text((tx + int(w) / 2, ty + int(h) / 2), text,
+                       font=font, fill=fill, anchor='mm')
+            else:
+                # 左对齐 + 盒内按字体真实 ascent/descent 垂直居中
+                # （取代 PIL 默认 'la' 钉顶 → 大字号 ink 视觉偏上）
+                d.text((tx, ty + int(h) / 2), text, font=font, fill=fill, anchor='lm')
         elif kind == 'pixels':
             # 直接绘制像素位图：rows = ["x1,x2", ...]
             for dy, row in enumerate(op.get('rows', [])):

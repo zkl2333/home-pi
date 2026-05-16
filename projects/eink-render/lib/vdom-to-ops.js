@@ -13,6 +13,7 @@
  *   margin[Top/Right/Bottom/Left]
  *   gap / rowGap / columnGap
  *   fontSize / fontWeight / fontFamily / color（继承）
+ *   textAlign:center（文字在自身盒内水平居中；默认左对齐）
  *   background / backgroundColor（黑/白 二值；灰色当黑处理，因为 e-ink 无灰）
  *   borderColor + borderWidth（四边）
  *
@@ -24,7 +25,9 @@ export const WIDTH = 250;
 export const HEIGHT = 122;
 
 // ─── 文字测量（近似，无需 canvas/PIL 实测） ────────────
-// wqy-microhei CJK 字符宽 ≈ fontSize；ASCII ≈ fontSize * 0.55
+// wqy-microhei CJK 字符宽 ≈ fontSize；ASCII ≈ fontSize * 0.55。
+// 这是粗估：居中文字不依赖它（见 textAlign:center → PIL anchor='mm'
+// 在盒心绘，盒心由 Yoga 居中保证 == 容器中心，与估宽误差无关）。
 export function measureText(text, fontSize) {
   let w = 0;
   for (const ch of String(text)) {
@@ -307,10 +310,15 @@ function emitOps(ctx, vnode, yn, parentX, parentY) {
       op: "text",
       x,
       y,
+      w,
+      h,
       text: vnode.__text,
       font: inh.fontFamily ?? "regular",
       size: fontPx(inh.fontSize),
       fill: colorToBW(inh.color, "black"),
+      // textAlign:center → Python 用 anchor='mm' 在盒心绘（盒心由 flex 居中
+      // 保证 == 容器中心，与估宽误差无关）。默认左对齐 + 盒内竖直居中。
+      align: style.textAlign === "center" ? "center" : undefined,
     });
     return;
   }

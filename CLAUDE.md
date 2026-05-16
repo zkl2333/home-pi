@@ -63,7 +63,7 @@ JSX 模板（lib/renderer.jsx）
 
 性能：daemon 化后冷启 ~1.5s + 后续每页 ~10ms。协议见 `python/render_ops.py` 的 `daemon_loop()`。
 
-字体：wqy-microhei（CJK，gitignored，`setup-font.mjs` 三级 fallback 下载）+ Phosphor Regular / Fill（图标，入库 git）。图标尺寸约定：Regular ≥ 10px，Fill ≥ 14px；状态栏 WiFi/电池/闪电用手绘像素图。
+字体：wqy-microhei（CJK，gitignored，`setup-font.mjs` 三级 fallback 下载）+ Phosphor Regular / Fill（图标，入库 git）+ Archivo Black（Overview 时钟数字，OFL，入库 git，FONTS key `clock`）。图标尺寸约定：Regular ≥ 10px，Fill ≥ 14px；状态栏 WiFi/电池/闪电用手绘像素图。
 
 依赖（仅 5 个 prod）：`hono` + `@hono/node-server`（HTTP）、`yoga-layout`（布局）、`react`（jsx-runtime）、`tsx`（JSX 转译）。Python 端 `Pillow`（Pi 已有）。Node `v22.22.2`（bootstrap 第 1.5 步固化）。
 

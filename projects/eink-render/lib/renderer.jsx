@@ -23,6 +23,7 @@ const FONTS = {
   regular: "fonts/wqy-microhei.ttf",
   "phosphor-fill": "fonts/Phosphor-Fill.ttf",
   phosphor: "fonts/Phosphor.ttf",
+  clock: "fonts/archivo-black.ttf", // Overview 时钟数字（Archivo Black, OFL）
 };
 // 本机 Windows 上 `python` 常是 Store 占位符（静默退出 9009）；用 PYTHON_BIN=py 覆盖。
 // Pi 上 `python` 走系统 python3，无需设置。
@@ -354,44 +355,59 @@ function Overview({ p, ctx }) {
 
   return (
     <Page>
-      {/* 无状态栏，全屏锁屏风格 */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          rowGap: 2,
-        }}
-      >
-        {/* 大时间 */}
-        <div style={{ display: "flex", fontSize: 42, fontWeight: 700 }}>{p.time}</div>
-        {/* 日期 */}
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 6 }}>
-          <div style={{ display: "flex", fontSize: 13 }}>{dateStr}</div>
-          <div style={{ display: "flex", fontSize: 13 }}>{wdStr}</div>
-        </div>
-      </div>
-      {/* 底栏：核心状态一行 */}
-      <div style={{ height: 1, background: "#000" }} />
+      {/* 顶部状态行：日期周几 / WiFi · 电量 */}
       <div
         style={{
           display: "flex",
           flexDirection: "row",
           alignItems: "center",
-          height: 16,
-          padding: "0 8px",
-          columnGap: 6,
-          fontSize: 10,
+          height: 26,
+          padding: "0 10px",
         }}
       >
-        <WifiIcon bars={p.rssi_bars} />
-        <div>{p.ip}</div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 6 }}>
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{dateStr}</div>
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{wdStr}</div>
+        </div>
         <div style={{ display: "flex", flex: 1 }} />
-        <Icon name={charging ? ICON.batteryCharging : ICON.lightning} size={10} />
-        <div>{p.battery}%</div>
-        <div style={{ display: "flex", fontSize: 9 }}>{p.temp}°C</div>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 5 }}>
+          <WifiIcon bars={p.rssi_bars} />
+          <div style={{ display: "flex", fontSize: 14, fontWeight: 700 }}>{p.battery}%</div>
+          <BatteryIcon level={p.battery} charging={charging} />
+        </div>
+      </div>
+
+      {/* 中部：巨型时钟（主角） */}
+      <div style={{ display: "flex", flex: 1, justifyContent: "center", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            fontFamily: "clock",
+            fontSize: 64,
+            fontWeight: 700,
+            textAlign: "center",
+          }}
+        >
+          {p.time}
+        </div>
+      </div>
+
+      {/* 底部状态行：IP / 温度 */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          height: 26,
+          padding: "0 10px",
+        }}
+      >
+        <div style={{ display: "flex", fontSize: 14 }}>{p.ip}</div>
+        <div style={{ display: "flex", flex: 1 }} />
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 4 }}>
+          <Icon name={ICON.thermometer} size={15} />
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{p.temp}°C</div>
+        </div>
       </div>
     </Page>
   );
