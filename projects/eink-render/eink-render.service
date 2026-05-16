@@ -1,5 +1,5 @@
 [Unit]
-Description=e-ink render server (JSX → 1-bit PNG via Yoga + Python PIL)
+Description=e-ink render server (JSX → 1-bit PNG via Yoga + FreeType-WASM MONO, pure Node)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/projects/eink-render
-# tsx 转 JSX，dep 锁版本；Python daemon 由 lib/renderer.jsx 内部 spawn 保活
+# tsx 转 JSX，dep 锁版本；纯 Node 渲染（FreeType-WASM，无 Python 子进程）
 ExecStart=/usr/local/bin/npx tsx server.mjs
 Restart=on-failure
 RestartSec=5

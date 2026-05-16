@@ -217,7 +217,18 @@ CI 产物 .wasm 推 Pi(`~/spike2-freetype-wasm/`，Node v22.22.2，armv7l)跑 te
 - 大字时钟（Archivo 64px）：5 字形 ~57ms——唯一偏大值，但是 **未缓存首绘最坏情况**；时钟字符集有限（10 数字+冒号）天然可缓存→稳态≈0；且其后紧跟的墨水屏局刷本身数百 ms~秒级，渲染被完全淹没；eink-status 仅分钟/关键字段变化才刷。
 - `pixel_mode=1`、advance `43/21/193`、`晴=24…` 与 PIL/CI **逐像素一致**——真机亦成立。
 
-**判定：Pi 性能可接受，无红灯。** 纯 Node 路 = 端到端 + 真机全部验证通过。**生产迁移仍未实施**——这是独立大改（自写 glyph-blit/行排版替掉 PIL ImageDraw + 把 measureText 接到 wasm advance + glyph 缓存 + 退役 Python daemon/协议 + .wasm 入库 + bootstrap/CI），需显式启动决策，不在 spike 范围。
+**判定：Pi 性能可接受，无红灯。** 纯 Node 路 = 端到端 + 真机全部验证通过。
+
+#### 迁移落地（2026-05-16，已完成）
+
+- `vendor/freetype-mono.wasm`（589KB，GitHub CI `emscripten/emsdk` 自编，入库）
+- `lib/ft-mono.mjs`：wasm 引擎，family→bytes 常驻堆，glyph 缓存（key=family|px|cp），小数 advance
+- `lib/raster.mjs`：ops→1-bit 画布→灰度 PNG，复刻 PIL `la/lm/mm` 三 anchor 模式
+- `renderer.jsx` 走 `renderToPng`；**`python/`、daemon 管线、`shutdownPythonDaemon`、`RENDER_BACKEND` 回退、`PYTHON_BIN` 全删**
+- parity：同 spec vs 旧 Python 仅亚像素 FreeType-hinting 抖动（1-4%，XOR 为纯字形描边，零结构差）；6 页 Pi 真机肉眼与旧版一致
+- 文档同步：CLAUDE.md / README / package.json
+
+至此渲染层 = JSX + JS Yoga + 自编 FreeType-WASM MONO，单语言单进程，测量与光栅同源，Python/PIL 彻底退役。eink-status 仍用 PIL 仅作屏驱动 `getbuffer`（与渲染无关）。本条 D12 结。
 
 ---
 

@@ -2,7 +2,7 @@
   "name": "eink-render",
   "private": true,
   "type": "module",
-  "description": "墨水屏渲染管线：JSX → Yoga 布局 → Python PIL → 1-bit PNG HTTP 服务",
+  "description": "墨水屏渲染管线：JSX → Yoga 布局 → 自编 FreeType-WASM MONO → 1-bit PNG HTTP 服务（纯 Node）",
   "scripts": {
     "render": "tsx render.mjs",
     "server": "tsx server.mjs",

@@ -2,7 +2,7 @@
 
 墨水屏（Waveshare 2.13" V3, 250×122）渲染管线探索。**目标**：本地用 JSX 写页面布局，输出真 1-bit PNG，对接 Pi 端 `projects/eink-status` 现有的 PIL 显示链路。
 
-> 当前状态：dev 预览跑通、6 页全可视化、纯黑白无灰。Pi 上 HTTP server 跑通（本机测试），systemd 部署链路就绪。真机验证 + eink-status 集成暂未做。
+> 当前状态：**生产中**。纯 Node 渲染（自编 FreeType-WASM，Python/PIL 已退役），6 页 Pi 真机验证通过，eink-status 经 HTTP 集成，systemd 部署。
 
 > **想知道为什么是当前架构、踩过哪些坑** → 看 [`EXPLORATION.md`](./EXPLORATION.md)（探索日志，含死路记录）。
 
@@ -19,21 +19,21 @@ lib/vdom-to-ops.js
   ├ Yoga calculateLayout()
   └ 走第二遍 emit ops JSON: [{op:rect/text/ellipse/line/pixels, x,y,...}]
    ↓
-python/render_ops.py
-  └ Image.new('1', ...) + ImageDraw + FreeType MONO（自动 hinting）
+lib/ft-mono.mjs + lib/raster.mjs
+  └ 自编 FreeType-WASM（FT_RENDER_MODE_MONO，自动 hinting）+ glyph 缓存
    ↓
-真 1-bit PNG（mode='P' 2-color palette，extrema 严格 (0,255)）
+1-bit PNG（灰度仅 0/255，eink-status convert('1') 无损）
 ```
 
-输出 250×122，~1 KB/page。
+输出 250×122，~1-2 KB/page。**纯 Node，无 Python/PIL**（2026-05 迁移，见 [`EXPLORATION.md`](./EXPLORATION.md) D12）。
 
-**性能**（Python 已 daemon 化，按行读 JSON、length-prefix 写 PNG）：
+**性能**（FreeType-WASM，单进程，glyph 缓存）：
 
-| 阶段 | 单次冷启（首张） | 热路径（后续） |
+| 阶段 | 冷启（首张） | 热路径（后续，缓存） |
 |---|---|---|
 | Node layout (Yoga) | 15-20ms | 2-6ms |
-| Python PIL render | 1.4-1.6s（含进程启动 + 字体加载） | 3-8ms |
-| **total** | ~1.5s | **6-13ms** |
+| wasm init | ~300ms (Pi) / ~12ms (CI) 一次性 | 0 |
+| FreeType-WASM raster | 小字 ~1ms/字形；大字时钟首绘可缓存 | ~0（缓存命中） |
 
 字体缓存 `_DAEMON_FONT_CACHE` 跨请求保活，所以热路径不重复 truetype 加载。
 
@@ -67,12 +67,12 @@ npm run render overview      # → output-overview.png
 npm run render system        # → output-system.png
 ```
 
-> Windows 本机调试 CLI 时需要 `PYTHON_BIN=py npm run render <page>`——`python.exe` 默认是 Store 占位符。Pi 上无需设置。
+> 纯 Node，无需 Python。CLI：`npm run render <page>`（= `tsx render.mjs`）。
 
 ### HTTP Server（本机调试）
 
 ```bash
-PYTHON_BIN=py npm run server          # 监听 127.0.0.1:8787
+npm run server                        # 监听 127.0.0.1:8787
 curl 'http://127.0.0.1:8787/api/health'
 curl 'http://127.0.0.1:8787/api/render?page=overview' -o overview.png
 ```

@@ -18,7 +18,7 @@
  */
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { render, PAGES, shutdownPythonDaemon } from "./lib/renderer.jsx";
+import { render, PAGES } from "./lib/renderer.jsx";
 
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT || 8787);
@@ -101,7 +101,6 @@ const shutdown = (signal) => {
   try {
     server.close();
   } catch {}
-  shutdownPythonDaemon();
   // 给 stdout 一点时间 flush
   setTimeout(() => process.exit(0), 100);
 };

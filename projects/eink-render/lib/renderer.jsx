@@ -1,158 +1,29 @@
 /**
- * 唯一渲染管线：JSX vnode → Yoga 布局 → ops JSON → Python PIL → 1-bit PNG。
+ * 唯一渲染管线：JSX vnode → Yoga 布局 → ops JSON → FreeType-WASM MONO → 1-bit PNG。
  *
  * 设计要点：
  * - 编写体验：JSX + camelCase 内联 style（CSS flexbox 子集）
  * - 布局：Yoga（useWebDefaults，flexDirection 默认 row）
- * - 渲染：PIL mode='1' + FreeType MONO，文字 hint 到像素网格 → 像素艺术
- * - 输出：真 2-color palette PNG，PIL/e-ink 一脉相承（pi 端 eink-status 同款）
+ * - 渲染：lib/raster.mjs（自编 FreeType-WASM，FT_RENDER_MODE_MONO，文字
+ *   hint 到像素网格 → 像素艺术），测量与光栅同源。纯 Node，无 Python。
+ * - 输出：灰度 PNG（仅 0/255，eink-status convert('1') 无损）。
  *
  * JSX 走 React 自动运行时（automatic runtime）：编译期转 `react/jsx-runtime`，
  * 运行时只是构造 `{ type, props }` 对象，不调和、不 reconcile，不挂 DOM。
  */
-import path from "node:path";
-import { spawn } from "node:child_process";
 import { vdomToOps } from "./vdom-to-ops.js";
 import { renderToPng } from "./raster.mjs";
-
-// 渲染后端：node = 纯 Node FreeType-WASM 光栅（默认，已退役 Python）；
-// python = 旧 PIL daemon（仅 parity 对齐用，RENDER_BACKEND=python）
-const RENDER_BACKEND = process.env.RENDER_BACKEND || "node";
 
 export const WIDTH = 250;
 export const HEIGHT = 122;
 const SB_H = 22;
 
-const PYTHON_SCRIPT = path.resolve("python/render_ops.py");
 const FONTS = {
   regular: "fonts/wqy-microhei.ttf",
   "phosphor-fill": "fonts/Phosphor-Fill.ttf",
   phosphor: "fonts/Phosphor.ttf",
   clock: "fonts/archivo-black.ttf", // Overview 时钟数字（Archivo Black, OFL）
 };
-// 本机 Windows 上 `python` 常是 Store 占位符（静默退出 9009）；用 PYTHON_BIN=py 覆盖。
-// Pi 上 `python` 走系统 python3，无需设置。
-const PYTHON_BIN = process.env.PYTHON_BIN || "python";
-
-// ─── Python daemon（守 stdin 流，消除每次 ~370ms 子进程冷启） ────────────────
-// 协议见 python/render_ops.py daemon_loop() 注释：
-//   请求：一行 JSON + \n
-//   响应：成功 "OK <len>\n" + len 字节 PNG；失败 "ERR <message>\n"
-// 单线程串行：同一时刻只有一个 in-flight 请求（队列 FIFO）。
-let daemonProc = null;
-let daemonQueue = []; // 每项 { resolve, reject } —— 等响应的回调
-let daemonState = "idle"; // "idle" | "header" | "payload"
-let headerBuf = Buffer.alloc(0);
-let payloadChunks = [];
-let payloadRemaining = 0;
-
-function ensureDaemon() {
-  if (daemonProc && daemonProc.exitCode === null && !daemonProc.killed) return daemonProc;
-  daemonProc = spawn(PYTHON_BIN, [PYTHON_SCRIPT, "--daemon"], {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  daemonState = "header";
-  headerBuf = Buffer.alloc(0);
-  payloadChunks = [];
-  payloadRemaining = 0;
-
-  daemonProc.stdout.on("data", handleStdoutChunk);
-  daemonProc.stderr.on("data", (c) => {
-    process.stderr.write(`[py daemon] ${c}`);
-  });
-  daemonProc.on("error", (err) => {
-    rejectAll(err);
-    daemonProc = null;
-  });
-  daemonProc.on("exit", (code, signal) => {
-    rejectAll(new Error(`python daemon exited code=${code} signal=${signal}`));
-    daemonProc = null;
-  });
-  // 父进程退出兜底
-  process.once("exit", () => {
-    try {
-      daemonProc?.kill();
-    } catch {}
-  });
-  return daemonProc;
-}
-
-function rejectAll(err) {
-  const q = daemonQueue;
-  daemonQueue = [];
-  for (const { reject } of q) reject(err);
-}
-
-function handleStdoutChunk(chunk) {
-  let buf = chunk;
-  while (buf.length > 0) {
-    if (daemonState === "header") {
-      const nl = buf.indexOf(0x0a); // '\n'
-      if (nl < 0) {
-        headerBuf = Buffer.concat([headerBuf, buf]);
-        return;
-      }
-      headerBuf = Buffer.concat([headerBuf, buf.subarray(0, nl)]);
-      buf = buf.subarray(nl + 1);
-      const header = headerBuf.toString("ascii");
-      headerBuf = Buffer.alloc(0);
-
-      if (header.startsWith("OK ")) {
-        payloadRemaining = parseInt(header.slice(3), 10);
-        if (!Number.isFinite(payloadRemaining) || payloadRemaining < 0) {
-          rejectAll(new Error(`bad daemon header: ${header}`));
-          try { daemonProc?.kill(); } catch {}
-          return;
-        }
-        if (payloadRemaining === 0) {
-          // 空 PNG：理论不会发生，但兜底
-          const job = daemonQueue.shift();
-          job?.resolve(Buffer.alloc(0));
-          daemonState = "header";
-        } else {
-          daemonState = "payload";
-        }
-      } else if (header.startsWith("ERR ")) {
-        const job = daemonQueue.shift();
-        job?.reject(new Error(`python: ${header.slice(4)}`));
-        daemonState = "header";
-      } else {
-        rejectAll(new Error(`bad daemon header: ${header}`));
-        try { daemonProc?.kill(); } catch {}
-        return;
-      }
-    } else if (daemonState === "payload") {
-      const take = Math.min(payloadRemaining, buf.length);
-      payloadChunks.push(buf.subarray(0, take));
-      buf = buf.subarray(take);
-      payloadRemaining -= take;
-      if (payloadRemaining === 0) {
-        const png = Buffer.concat(payloadChunks);
-        payloadChunks = [];
-        const job = daemonQueue.shift();
-        job?.resolve(png);
-        daemonState = "header";
-      }
-    }
-  }
-}
-
-function pyRender(spec) {
-  return new Promise((resolve, reject) => {
-    const proc = ensureDaemon();
-    daemonQueue.push({ resolve, reject });
-    proc.stdin.write(JSON.stringify(spec) + "\n");
-  });
-}
-
-// 提供给上层在 SIGINT / 测试后清理用
-export function shutdownPythonDaemon() {
-  if (daemonProc) {
-    try { daemonProc.stdin.end(); } catch {}
-    try { daemonProc.kill(); } catch {}
-    daemonProc = null;
-  }
-}
 
 // ─── Phosphor 图标 ──────────────────────────────────
 // 尺寸约定（1-bit FreeType MONO 下的可辨认阈值）：
@@ -804,7 +675,7 @@ export async function render(params, pageId) {
   const spec = vdomToOps(vnode, { width: WIDTH, height: HEIGHT, fonts: FONTS });
   const t1 = performance.now();
 
-  const png = RENDER_BACKEND === "python" ? await pyRender(spec) : await renderToPng(spec);
+  const png = await renderToPng(spec);
   const t2 = performance.now();
 
   return {
@@ -815,7 +686,7 @@ export async function render(params, pageId) {
     spec,
     timings: {
       layout: +(t1 - t0).toFixed(2),
-      pil: +(t2 - t1).toFixed(2),
+      raster: +(t2 - t1).toFixed(2),
       total: +(t2 - t0).toFixed(2),
     },
   };
