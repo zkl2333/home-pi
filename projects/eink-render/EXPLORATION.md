@@ -234,6 +234,14 @@ CI 产物 .wasm 推 Pi(`~/spike2-freetype-wasm/`，Node v22.22.2，armv7l)跑 te
 
 至此渲染层 = JSX + JS Yoga + 自编 FreeType-WASM MONO，单语言单进程，测量与光栅同源，Python/PIL 彻底退役。eink-status 仍用 PIL 仅作屏驱动 `getbuffer`（与渲染无关）。本条 D12 结。
 
+#### 后续：自编单 MONO 切片 → 独立通用库（2026-05-17）
+
+`spike2-freetype-wasm/` 的 `glue.c` 单 g_face 全局态、手挑函数切片、只 MONO，是为本项目剪裁的。把它扶正成独立公开库 [`zkl2333/freetype-wasm`](https://github.com/zkl2333/freetype-wasm)：完整 FreeType 公共 C API（头里 `FT_EXPORT` ∩ `libfreetype.a` 实际符号）+ wasm32 结构体偏移 + 内存可增长 + WOFF2，tag 与上游 FreeType 1:1（`vX.Y.Z`，无 `-N`；滚动指针 + jsdelivr 自动 purge；复现钉构建提交 SHA），定时任务自动追上游。pi 改为**消费其 dist 钉版入库** `vendor/freetype-wasm/`（`v2.14.3` = FreeType 2.14.3）——Pi 屏蔽 github.com，故不走 `npm i github:`，入库即离线可用。
+
+`lib/ft-mono.mjs` 重写到新库 API（`initFreeType`/`Face.loadGlyph({flags:LOAD_TARGET_MONO,renderMode:RENDER_MODE_MONO})`，竖直度量走原生层 `ft.offsets` 读 `FT_Size_Metrics` 拿按字号缩放值），**导出契约 `initFt/glyph/measure/vmetrics` 不变** → `raster.mjs`/`vdom-to-ops.js`/`renderer.jsx` 零改动。死路提醒：`Face.info()` 的 ascender/descender 是 face 级 font-unit 值，**不能**直接当基线，必须读 `size->metrics`（26.6 grid-fitted）否则基线偏移。
+
+parity 实测（旧 2.13.3 自编 vs 新 2.14.3 库，1144 样本 = regular/clock/phosphor/phosphor-fill × 11 字号）：advance / 几何 / MONO 位图 / vmetrics **逐字节零差异**。代价：wasm 830KB（旧切片 589KB，多链了完整 API）；收益：单一上游真相源、自动追版、不再维护两套 FreeType 构建。`spike2-freetype-wasm/` + 其 CI workflow 自此为历史档，生产不再依赖。
+
 ---
 
 ## 踩过的坑

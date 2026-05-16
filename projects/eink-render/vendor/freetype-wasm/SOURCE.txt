@@ -1,0 +1,4 @@
+source: github.com/zkl2333/freetype-wasm
+tag:    v2.14.3 (FreeType 2.14.3)
+commit: 9db6916170ffc9ad4cd29211d2f891c1b0d9fe5d
+fetched into vendor on first switch; runtime needs no network.

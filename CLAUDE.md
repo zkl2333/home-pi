@@ -61,11 +61,13 @@ JSX 模板（lib/renderer.jsx）
   → lib/raster.mjs（自编 FreeType-WASM FT_RENDER_MODE_MONO）→ 1-bit PNG
 ```
 
-渲染层 2026-05 迁移为**纯 Node**（自编 `vendor/freetype-mono.wasm`，`lib/ft-mono.mjs` 引擎 + `lib/raster.mjs` 光栅），**Python/PIL 已彻底退役**——测量与光栅同源、单进程、无 IPC。背景/选型/spike 见 EXPLORATION D12。性能：glyph 缓存后小字 ~1ms/字形，大字时钟首绘可缓存（远小于墨水屏刷新）。
+渲染层 2026-05 迁移为**纯 Node**（`lib/ft-mono.mjs` 引擎 + `lib/raster.mjs` 光栅），**Python/PIL 已彻底退役**——测量与光栅同源、单进程、无 IPC。背景/选型/spike 见 EXPLORATION D12。性能：glyph 缓存后小字 ~1ms/字形，大字时钟首绘可缓存（远小于墨水屏刷新）。
+
+FreeType-WASM 不再自编单 MONO 切片，改为消费独立通用库 [`zkl2333/freetype-wasm`](https://github.com/zkl2333/freetype-wasm)（完整公共 API、内存可增长、上游对齐），其 `dist/` 钉版入库 `vendor/freetype-wasm/`（tag `v2.14.3` = FreeType 2.14.3，见 `vendor/freetype-wasm/SOURCE.txt`）。`ft-mono.mjs` 仍只走 FT_RENDER_MODE_MONO，导出契约不变（`initFt/glyph/measure/vmetrics`），故 `raster.mjs`/`vdom-to-ops.js`/`renderer.jsx` 零改动。已用 1144 样本（4 字族 × 11 字号）实测：advance/几何/MONO 位图/竖直度量与旧自编 2.13.3 **逐字节一致**（FT 2.13.3→2.14.3 对这些字体的 hinted MONO 输出无变化）。升级版本：换 tag 重抽 `vendor/freetype-wasm/`（运行时不联网；与 Pi 屏蔽 github.com 的约束兼容）。
 
 字体：wqy-microhei（CJK，gitignored，`setup-font.mjs` 三级 fallback 下载）+ Phosphor Regular / Fill（图标，入库 git）+ Archivo Black（Overview 时钟数字，OFL，入库 git，FONTS key `clock`）。图标尺寸约定：Regular ≥ 10px，Fill ≥ 14px；状态栏 WiFi/电池/闪电用手绘像素图。
 
-依赖（纯 Node，无 Python）：`hono` + `@hono/node-server`（HTTP）、`yoga-layout`（布局）、`react`（jsx-runtime）、`tsx`（JSX 转译）；`vendor/freetype-mono.wasm` 自编入库（FreeType 2.13.3，GitHub CI `emscripten/emsdk` 构建，零运行时原生依赖）。Node `v22.22.2`（bootstrap 第 1.5 步固化）。
+依赖（纯 Node，无 Python）：`hono` + `@hono/node-server`（HTTP）、`yoga-layout`（布局）、`react`（jsx-runtime）、`tsx`（JSX 转译）；`vendor/freetype-wasm/`（消费 `zkl2333/freetype-wasm@v2.14.3` 的 dist，入库、零运行时原生依赖、不联网）。Node `v22.22.2`（bootstrap 第 1.5 步固化）。
 
 首次部署用 `scripts/pi-bringup.sh <pi-ip>`。**探索路径 + 死路记录见 [`projects/eink-render/EXPLORATION.md`](projects/eink-render/EXPLORATION.md)。**
 

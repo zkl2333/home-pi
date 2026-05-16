@@ -2,7 +2,7 @@
 
 墨水屏（Waveshare 2.13" V3, 250×122）渲染管线探索。**目标**：本地用 JSX 写页面布局，输出真 1-bit PNG，对接 Pi 端 `projects/eink-status` 现有的 PIL 显示链路。
 
-> 当前状态：**生产中**。纯 Node 渲染（自编 FreeType-WASM，Python/PIL 已退役），6 页 Pi 真机验证通过，eink-status 经 HTTP 集成，systemd 部署。
+> 当前状态：**生产中**。纯 Node 渲染（FreeType-WASM，消费独立通用库 `zkl2333/freetype-wasm` 钉版入库，Python/PIL 已退役），6 页 Pi 真机验证通过，eink-status 经 HTTP 集成，systemd 部署。
 
 > **想知道为什么是当前架构、踩过哪些坑** → 看 [`EXPLORATION.md`](./EXPLORATION.md)（探索日志，含死路记录）。
 
@@ -20,7 +20,8 @@ lib/vdom-to-ops.js
   └ 走第二遍 emit ops JSON: [{op:rect/text/ellipse/line/pixels, x,y,...}]
    ↓
 lib/ft-mono.mjs + lib/raster.mjs
-  └ 自编 FreeType-WASM（FT_RENDER_MODE_MONO，自动 hinting）+ glyph 缓存
+  └ FreeType-WASM（vendor/freetype-wasm/，钉 zkl2333/freetype-wasm@v2.14.3；
+    FT_RENDER_MODE_MONO，自动 hinting）+ glyph 缓存
    ↓
 1-bit PNG（灰度仅 0/255，eink-status convert('1') 无损）
 ```
