@@ -1,7 +1,5 @@
 /** 日历：月历网格，今日反白块，表头年月 + 今日。 */
-import { StdPage, Txt, Icon, ICON } from "../components.jsx";
-
-const COL_W = 34;
+import { Page, StatusBar } from "../components.jsx";
 
 export default function Calendar({ p, ctx }) {
   const first = new Date(p.cal_year, p.cal_month - 1, 1);
@@ -24,9 +22,37 @@ export default function Calendar({ p, ctx }) {
   const wdLabels = "一二三四五六日";
   const wdToday = wdLabels[(new Date(p.cal_year, p.cal_month - 1, p.cal_today).getDay() + 6) % 7];
 
+  // 固定列宽，避免 flex:1 因文字宽度不同导致列不等宽
+  const COL_W = 34;
+
   const dayCell = (day, key) => {
-    if (day === 0) return <div key={key} style={{ display: "flex", width: COL_W }} />;
-    const isToday = day === p.cal_today;
+    if (day === 0) return <div key={key} style={{ width: COL_W }} />;
+    if (day === p.cal_today) {
+      return (
+        <div
+          key={key}
+          style={{
+            display: "flex",
+            width: COL_W,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              width: 14,
+              height: 11,
+              background: "#000",
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#fff" }}>{day}</div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div
         key={key}
@@ -37,64 +63,59 @@ export default function Calendar({ p, ctx }) {
           alignItems: "center",
         }}
       >
-        {isToday ? (
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              width: 15,
-              height: 12,
-              background: "#000",
-            }}
-          >
-            <Txt size={10} weight={700} color="#fff">{day}</Txt>
-          </div>
-        ) : (
-          <Txt size={10}>{day}</Txt>
-        )}
+        <div style={{ fontSize: 10 }}>{day}</div>
       </div>
     );
   };
 
   return (
-    <StdPage p={p} ctx={ctx} bodyPad="2px 4px" gap={1}>
-      {/* 表头：年月 / 今日 */}
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 4 }}>
-        <Icon name={ICON.calendarBlank} size={12} />
-        <Txt size={12} weight={700}>{p.cal_year}年 {p.cal_month}月</Txt>
+    <Page>
+      <StatusBar p={p} pageIdx={ctx.pageIdx} pageTotal={ctx.pageTotal} pageName={ctx.pageName} />
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          alignItems: "center",
+          padding: "2px 6px",
+        }}
+      >
+        <div style={{ display: "flex", fontSize: 12, fontWeight: 700 }}>
+          {p.cal_year}年 {p.cal_month}月
+        </div>
         <div style={{ display: "flex", flex: 1 }} />
-        <Txt size={11}>今 {p.cal_today}日 周{wdToday}</Txt>
+        <div style={{ display: "flex", fontSize: 11 }}>
+          今 {p.cal_today}日 周{wdToday}
+        </div>
       </div>
-      <div style={{ height: 1, background: "#000" }} />
-
-      {/* 周标签 */}
-      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center" }}>
+      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", padding: "0 4px" }}>
         {[...wdLabels].map((lb) => (
-          <div key={lb} style={{ display: "flex", width: COL_W, justifyContent: "center" }}>
-            <Txt size={9}>{lb}</Txt>
+          <div
+            key={lb}
+            style={{
+              display: "flex",
+              width: COL_W,
+              justifyContent: "center",
+            }}
+          >
+            <div style={{ fontSize: 10 }}>{lb}</div>
           </div>
         ))}
       </div>
-
-      {/* 日期网格 */}
       <div
         style={{
           display: "flex",
           flexDirection: "column",
           flex: 1,
+          padding: "0 4px 2px 4px",
           alignItems: "center",
         }}
       >
         {weeks.map((w, wi) => (
-          <div
-            key={wi}
-            style={{ display: "flex", flexDirection: "row", flex: 1, alignItems: "center" }}
-          >
+          <div key={wi} style={{ display: "flex", flexDirection: "row", flex: 1, alignItems: "center" }}>
             {w.map((d, di) => dayCell(d, di))}
           </div>
         ))}
       </div>
-    </StdPage>
+    </Page>
   );
 }

@@ -1,5 +1,5 @@
 /** 概览：巨型时钟为主角，顶栏日期/电量，底栏 IP/温度。 */
-import { Page, Txt, Icon, ICON, WifiIcon, BatteryIcon } from "../components.jsx";
+import { Page, Icon, ICON, WifiIcon, BatteryIcon } from "../components.jsx";
 
 export default function Overview({ p }) {
   const now = new Date();
@@ -10,7 +10,7 @@ export default function Overview({ p }) {
 
   return (
     <Page>
-      {/* 顶栏：日期 周几 / WiFi 电量 */}
+      {/* 顶部状态行：日期周几 / WiFi · 电量 */}
       <div
         style={{
           display: "flex",
@@ -21,27 +21,19 @@ export default function Overview({ p }) {
         }}
       >
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 6 }}>
-          <Txt size={15} weight={700}>{dateStr}</Txt>
-          <Txt size={15} weight={700}>{wdStr}</Txt>
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{dateStr}</div>
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{wdStr}</div>
         </div>
         <div style={{ display: "flex", flex: 1 }} />
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 5 }}>
           <WifiIcon bars={p.rssi_bars} />
-          <Txt size={14} weight={700}>{p.battery}%</Txt>
+          <div style={{ display: "flex", fontSize: 14, fontWeight: 700 }}>{p.battery}%</div>
           <BatteryIcon level={p.battery} charging={charging} />
         </div>
       </div>
-      <div style={{ height: 1, background: "#000" }} />
 
       {/* 中部：巨型时钟（主角） */}
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
+      <div style={{ display: "flex", flex: 1, justifyContent: "center", alignItems: "center" }}>
         <div
           style={{
             display: "flex",
@@ -55,8 +47,7 @@ export default function Overview({ p }) {
         </div>
       </div>
 
-      {/* 底栏：IP / 温度 */}
-      <div style={{ height: 1, background: "#000" }} />
+      {/* 底部状态行：IP / 温度 */}
       <div
         style={{
           display: "flex",
@@ -66,14 +57,11 @@ export default function Overview({ p }) {
           padding: "0 10px",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 4 }}>
-          <Icon name={ICON.wifiHigh} size={13} />
-          <Txt size={14}>{p.ip}</Txt>
-        </div>
+        <div style={{ display: "flex", fontSize: 14 }}>{p.ip}</div>
         <div style={{ display: "flex", flex: 1 }} />
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 4 }}>
           <Icon name={ICON.thermometer} size={15} />
-          <Txt size={15} weight={700}>{p.temp}°C</Txt>
+          <div style={{ display: "flex", fontSize: 15, fontWeight: 700 }}>{p.temp}°C</div>
         </div>
       </div>
     </Page>

@@ -1,12 +1,13 @@
 /**
  * 公共组件 + 常量。被 lib/pages/*.jsx 与 lib/renderer.jsx 共享。
  *
+ * 仅做文件拆分，不引入额外抽象：组件与旧单文件 renderer.jsx 逐字一致，
+ * 各页布局行为与重构前的稳定版完全相同（卡片化美化已回退）。
+ *
  * 渲染约束（来自 vdom-to-ops.js）：
  * - 只有 host element；函数组件被立即展开，不写 hooks。
  * - CSS 子集：flex / 黑白 / borderColor+borderWidth（直角四边）。
- *   不支持圆角卡片（borderRadius 仅 ≤16px 当圆点）、阴影、渐变、absolute。
  * - text-as-leaf 陷阱：同一节点既有文字又有 flex 容器 props 会被当 leaf。
- *   故所有文字都包到「纯文本叶子 div」里。
  */
 
 export const WIDTH = 250;
@@ -59,47 +60,15 @@ export const ICON = {
   eye: "",
   snowflake: "",
   umbrella: "",
-  mapPin: "",
-  memory: "",
 };
 
-// ─── 文字叶子：规避 text-as-leaf 陷阱 ────────────────
-export const Txt = ({ children, size, weight, family, color, mt }) => (
-  <div
-    style={{
-      display: "flex",
-      fontSize: size,
-      fontWeight: weight,
-      fontFamily: family,
-      color,
-      marginTop: mt,
-    }}
-  >
-    {children}
-  </div>
-);
-
-// ─── 分隔线 ────────────────────────────────────────
-export const HR = ({ m }) => (
-  <div style={{ height: 1, background: "#000", marginTop: m, marginBottom: m }} />
-);
-export const VR = () => <div style={{ width: 1, background: "#000" }} />;
-
-// ─── Phosphor 图标 ──────────────────────────────────
 export const Icon = ({ name, size = 12, color, fill }) => (
-  <div
-    style={{
-      display: "flex",
-      fontFamily: fill ? "phosphor-fill" : "phosphor",
-      fontSize: size,
-      color: color || "#000",
-    }}
-  >
-    {name}
-  </div>
+  <div style={{ fontFamily: fill ? "phosphor-fill" : "phosphor", fontSize: size, color: color || "#000" }}>{name}</div>
 );
 
-// ─── 手绘像素图标（状态栏专用，1-bit 小尺寸更锐利） ──
+// ─── 共用片段 ──────────────────────────────────────
+
+// 5×8 Z 字闪电（像素图，状态栏专用）
 const ZBOLT_ROWS = [
   [3, 3], [2, 3], [1, 2], [0, 3],
   [1, 4], [2, 3], [1, 2], [0, 1],
@@ -119,6 +88,7 @@ export const Zbolt = () => (
   </div>
 );
 
+// 4 格 WiFi 信号（像素图，状态栏专用）
 export const WifiIcon = ({ bars }) => (
   <div style={{ display: "flex", alignItems: "flex-end", columnGap: 1, flexShrink: 0 }}>
     {[3, 5, 7, 9].map((h, i) => (
@@ -138,6 +108,7 @@ export const WifiIcon = ({ bars }) => (
   </div>
 );
 
+// 电池胶囊（像素图，状态栏专用）
 export const BatteryIcon = ({ level, charging }) => {
   const pct = Math.max(0, Math.min(100, level ?? 0));
   const innerW = Math.round(pct * 0.22);
@@ -166,91 +137,13 @@ export const BatteryIcon = ({ level, charging }) => {
   );
 };
 
-const Dot = ({ filled }) =>
+export const Dot = ({ filled }) =>
   filled ? (
     <div style={{ display: "flex", width: 5, height: 5, background: "#000" }} />
   ) : (
     <div style={{ display: "flex", width: 5, height: 5, borderColor: "#000", borderWidth: 1 }} />
   );
 
-// 横向电量条（Power 页主视觉，撑充实度）
-export const BatteryBar = ({ level }) => {
-  const pct = Math.max(0, Math.min(100, level ?? 0));
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        height: 12,
-        borderColor: "#000",
-        borderWidth: 1,
-        padding: 1,
-        alignItems: "center",
-      }}
-    >
-      <div style={{ display: "flex", width: `${pct}%`, height: 8, background: "#000" }} />
-    </div>
-  );
-};
-
-// ─── 卡片：直角描边分区（圆角不支持，用 1px 黑边还原参考图分区感） ──
-export const Card = ({ children, grow, dir = "column", pad = 4, gap }) => (
-  <div
-    style={{
-      display: "flex",
-      flexDirection: dir,
-      flex: grow ? 1 : undefined,
-      borderColor: "#000",
-      borderWidth: 1,
-      padding: pad,
-      rowGap: dir === "column" ? gap : undefined,
-      columnGap: dir === "row" ? gap : undefined,
-    }}
-  >
-    {children}
-  </div>
-);
-
-// ─── Stat：图标 + 大数字 + 小标签（参考图核心信息单元） ──
-export const Stat = ({ icon, iconFill, label, value, unit, valueSize = 20 }) => (
-  <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-    <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 3 }}>
-      {icon && <Icon name={icon} size={iconFill ? 11 : 10} fill={iconFill} />}
-      <Txt size={9}>{label}</Txt>
-    </div>
-    <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-end", columnGap: 2 }}>
-      <Txt size={valueSize} weight={700}>{value}</Txt>
-      {unit && <Txt size={10} mt={-1}>{unit}</Txt>}
-    </div>
-  </div>
-);
-
-// 进度条（内存/磁盘用）
-export const Bar = ({ pct }) => (
-  <div style={{ display: "flex", height: 3, borderColor: "#000", borderWidth: 1 }}>
-    <div style={{ display: "flex", width: `${Math.min(100, pct)}%`, background: "#000" }} />
-  </div>
-);
-
-// ─── 卡片标题行：图标 + 标题 + 右侧次要信息（参考图 To-Do/World Clock 头） ──
-export const CardHead = ({ icon, iconFill, title, right }) => (
-  <div
-    style={{
-      display: "flex",
-      flexDirection: "row",
-      alignItems: "center",
-      columnGap: 4,
-      paddingBottom: 2,
-    }}
-  >
-    {icon && <Icon name={icon} size={iconFill ? 14 : 11} fill={iconFill} />}
-    <Txt size={12} weight={700}>{title}</Txt>
-    <div style={{ display: "flex", flex: 1 }} />
-    {right != null && <Txt size={11}>{right}</Txt>}
-  </div>
-);
-
-// ─── 状态栏（非 overview 各页共用顶栏） ───────────────
 export function StatusBar({ p, pageIdx, pageTotal, pageName }) {
   return (
     <>
@@ -263,7 +156,7 @@ export function StatusBar({ p, pageIdx, pageTotal, pageName }) {
           padding: "0 6px",
         }}
       >
-        <Txt size={14} weight={700}>{p.time}</Txt>
+        <div style={{ display: "flex", fontSize: 14, fontWeight: 700, flexShrink: 0 }}>{p.time}</div>
         <div
           style={{
             display: "flex",
@@ -278,7 +171,9 @@ export function StatusBar({ p, pageIdx, pageTotal, pageName }) {
           {Array.from({ length: pageTotal }, (_, i) => (
             <Dot key={i} filled={i === pageIdx} />
           ))}
-          {pageName && <Txt size={12}>{pageName}</Txt>}
+          {pageName && (
+            <div style={{ display: "flex", fontSize: 12, marginLeft: 2 }}>{pageName}</div>
+          )}
         </div>
         <div
           style={{
@@ -290,7 +185,7 @@ export function StatusBar({ p, pageIdx, pageTotal, pageName }) {
           }}
         >
           <WifiIcon bars={p.rssi_bars} />
-          <Txt size={12} weight={700}>{p.battery}%</Txt>
+          <div style={{ display: "flex", fontSize: 12, fontWeight: 700 }}>{p.battery}%</div>
           <BatteryIcon level={p.battery} charging={p.state === "充电中"} />
         </div>
       </div>
@@ -299,7 +194,6 @@ export function StatusBar({ p, pageIdx, pageTotal, pageName }) {
   );
 }
 
-// ─── 页面外壳 ──────────────────────────────────────
 export const Page = ({ children }) => (
   <div
     style={{
@@ -312,22 +206,4 @@ export const Page = ({ children }) => (
   >
     {children}
   </div>
-);
-
-// 状态栏 + body 的常规页布局（body 撑满剩余空间）
-export const StdPage = ({ p, ctx, children, bodyPad = "3px 5px", gap = 4 }) => (
-  <Page>
-    <StatusBar p={p} pageIdx={ctx.pageIdx} pageTotal={ctx.pageTotal} pageName={ctx.pageName} />
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        flex: 1,
-        padding: bodyPad,
-        rowGap: gap,
-      }}
-    >
-      {children}
-    </div>
-  </Page>
 );
