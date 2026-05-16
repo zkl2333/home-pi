@@ -250,9 +250,14 @@ function buildYogaTree(vnode, parentInherited) {
   if (allText) {
     const text = children.map(String).join("");
     const fs = fontPx(inherited.fontSize);
-    const m = measureText(text, fs);
-    if (style.width === undefined) yn.setWidth(m.width);
-    if (style.height === undefined) yn.setHeight(m.height);
+    // 宽：优先注入的精确测量器（ft-mono FreeType advance，与光栅同源）；
+    // 缺省回退 0.55 估算。高：仍用 1.2×fs 行盒（竖直居中由 raster
+    // 的 anchor 'lm'/'mm' 按字体真实 ascent/descent 处理，与此盒高解耦）。
+    const w = _measure
+      ? _measure(text, fs, inherited.fontFamily)
+      : measureText(text, fs).width;
+    if (style.width === undefined) yn.setWidth(w);
+    if (style.height === undefined) yn.setHeight(Math.ceil(fs * 1.2));
     vnode.__text = text;
     return yn;
   }
@@ -333,22 +338,32 @@ function emitOps(ctx, vnode, yn, parentX, parentY) {
   }
 }
 
+// 注入的精确测量器（renderer 在 ft-mono 就绪后传入）。buildYogaTree 递归
+// 内部用，故走模块级；vdomToOps 单次调用串行（ft-mono 单 g_face 本就串行）。
+let _measure = null;
+
 // ─── 主入口 ────────────────────────────────────────
-export function vdomToOps(vnode, { width = WIDTH, height = HEIGHT, fonts } = {}) {
-  // 把整棵 JSX 树展开成 host-only 规范树（type 全是字符串、children 全是扁平数组）
-  const root = normalizeTree(vnode);
-  const yRoot = buildYogaTree(root, {});
-  yRoot.setWidth(width);
-  yRoot.setHeight(height);
-  yRoot.calculateLayout(width, height);
+// opts.measure?: (text, fontPx, fontFamily) => widthPx —— 缺省回退 0.55 估算
+export function vdomToOps(vnode, { width = WIDTH, height = HEIGHT, fonts, measure } = {}) {
+  _measure = measure || null;
+  try {
+    // 把整棵 JSX 树展开成 host-only 规范树（type 全字符串、children 全扁平）
+    const root = normalizeTree(vnode);
+    const yRoot = buildYogaTree(root, {});
+    yRoot.setWidth(width);
+    yRoot.setHeight(height);
+    yRoot.calculateLayout(width, height);
 
-  const ctx = { ops: [] };
-  emitOps(ctx, root, yRoot, 0, 0);
-  yRoot.freeRecursive();
+    const ctx = { ops: [] };
+    emitOps(ctx, root, yRoot, 0, 0);
+    yRoot.freeRecursive();
 
-  return {
-    size: [width, height],
-    fonts: fonts ?? { regular: "fonts/wqy-microhei.ttf" },
-    ops: ctx.ops,
-  };
+    return {
+      size: [width, height],
+      fonts: fonts ?? { regular: "fonts/wqy-microhei.ttf" },
+      ops: ctx.ops,
+    };
+  } finally {
+    _measure = null;
+  }
 }

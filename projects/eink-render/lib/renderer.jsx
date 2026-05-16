@@ -13,6 +13,10 @@
  */
 import { vdomToOps } from "./vdom-to-ops.js";
 import { renderToPng } from "./raster.mjs";
+import { initFt, measure as ftMeasure } from "./ft-mono.mjs";
+
+// 注入给 Yoga 的精确测量器：与光栅同一 FreeType 引擎，消除 0.55 估算
+const exactMeasure = (text, px, family) => ftMeasure(family, px, text);
 
 export const WIDTH = 250;
 export const HEIGHT = 122;
@@ -668,11 +672,19 @@ export async function render(params, pageId) {
   const page = getPage(pageId);
   const ctx = { pageIdx: page.idx, pageTotal: PAGES.length, pageName: page.name };
 
+  // ft-mono 须在布局前就绪：Yoga 测量同步回调进 FreeType advance
+  await initFt();
+
   const t0 = performance.now();
   // JSX 组件直接调用为函数，拿原始 vnode（不走 React reconciler）
   const Component = page.build;
   const vnode = <Component p={p} ctx={ctx} />;
-  const spec = vdomToOps(vnode, { width: WIDTH, height: HEIGHT, fonts: FONTS });
+  const spec = vdomToOps(vnode, {
+    width: WIDTH,
+    height: HEIGHT,
+    fonts: FONTS,
+    measure: exactMeasure,
+  });
   const t1 = performance.now();
 
   const png = await renderToPng(spec);

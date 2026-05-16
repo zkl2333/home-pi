@@ -114,11 +114,12 @@ export function glyph(family, px, codepoint) {
   return g;
 }
 
-/** 文本宽度（advance 累加，单一真相源——与光栅同字体度量） */
+/** 文本宽度（小数 advance 累加后 ceil，单一真相源——与光栅同字体度量）。
+ *  布局用：节点盒宽匹配真实 ink，Yoga 居中/排布/换行才正确。 */
 export function measure(family, px, text) {
   let wsum = 0;
-  for (const ch of String(text)) wsum += glyph(family, px, ch.codePointAt(0)).adv;
-  return wsum;
+  for (const ch of String(text)) wsum += glyph(family, px, ch.codePointAt(0)).advf;
+  return Math.ceil(wsum);
 }
 
 /** 该字号字体竖直度量（26.6 → px） */
