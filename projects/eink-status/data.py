@@ -145,7 +145,6 @@ class Snapshot:
     charging: bool
     plugged: bool
     bat_v: float | None
-    bat_i: float | None
     rssi: int | None
     rssi_bars: int
     cpu_temp: int | None
@@ -218,14 +217,13 @@ def _estimate_battery_eta(level: float | None,
 def take_snapshot() -> Snapshot:
     now = datetime.now()
     pi = query_pisugar([
-        'get battery', 'get battery_v', 'get battery_i',
+        'get battery', 'get battery_v',
         'get battery_charging', 'get battery_power_plugged',
     ])
     battery_raw = _safe_float(pi.get('battery'))
     charging = pi.get('battery_charging', '').lower() == 'true'
     plugged = pi.get('battery_power_plugged', '').lower() == 'true'
     bat_v = _safe_float(pi.get('battery_v'))
-    bat_i = _safe_float(pi.get('battery_i'))
     rssi = get_wifi_rssi()
     used_mb, total_mb = get_mem()
     used_gb, total_gb = get_disk('/')
@@ -243,7 +241,6 @@ def take_snapshot() -> Snapshot:
         charging=charging,
         plugged=plugged,
         bat_v=bat_v,
-        bat_i=bat_i,
         rssi=rssi,
         rssi_bars=rssi_to_bars(rssi),
         cpu_temp=get_cpu_temp(),

@@ -40,13 +40,6 @@ def _state(s: Snapshot) -> str:
     return '放电'
 
 
-def _bat_i_ma(bat_i: float | None) -> int | None:
-    """PiSugar 报的 bat_i 可能是 A（< 10）或 mA。规则跟 render.py 248 行一致。"""
-    if bat_i is None:
-        return None
-    return round(bat_i * 1000 if abs(bat_i) < 10 else bat_i)
-
-
 def snapshot_to_params(s: Snapshot) -> dict:
     """Snapshot → eink-render params dict。"""
     mem_pct = int(s.used_mb * 100 / s.total_mb) if s.total_mb else 0
@@ -63,7 +56,6 @@ def snapshot_to_params(s: Snapshot) -> dict:
         'battery': s.battery_pct if s.battery_pct is not None else 0,
         'state': _state(s),
         'bat_v': s.bat_v,
-        'bat_i': _bat_i_ma(s.bat_i),
         'bat_eta_label': s.bat_eta_label,
         'bat_eta_val': s.bat_eta_val,
         # 网络

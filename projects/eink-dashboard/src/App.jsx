@@ -178,7 +178,7 @@ function SnapshotMeta({ snap, error, onRefresh }) {
     ["host", p.hostname],
     ["uptime", p.uptime],
     ["battery", `${p.battery}% · ${p.state}`],
-    ["bat", p.bat_v != null ? `${p.bat_v}V ${p.bat_i ?? 0}mA` : "—"],
+    ["bat", p.bat_v != null ? `${p.bat_v}V` : "—"],
     ["wifi", `${p.rssi}dBm (${p.rssi_bars}/4)`],
     ["cpu", `${p.temp}°C · load ${p.load}`],
     ["mem", `${p.memUsed}/${p.memTotal}M (${p.memPercent}%)`],

@@ -362,7 +362,6 @@ function System({ p, ctx }) {
 
 function Power({ p, ctx }) {
   const batPct = Math.max(0, Math.min(100, p.battery ?? 0));
-  const ma = p.bat_i != null ? `${p.bat_i > 0 ? "+" : ""}${Number(p.bat_i).toFixed(0)}mA` : "-";
   const v = p.bat_v != null ? `${Number(p.bat_v).toFixed(3)}V` : "-";
   const charging = p.state === "充电中";
   const stateIcon = charging ? ICON.batteryCharging : ICON.lightning;
@@ -395,23 +394,13 @@ function Power({ p, ctx }) {
         </div>
       </div>
       <div style={{ height: 1, background: "#000" }} />
-      {/* 底部：电压 | 电流，两列对称 */}
-      <div style={{ display: "flex", flexDirection: "row", flex: 1 }}>
-        <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "2px 6px" }}>
-          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 2 }}>
-            <Icon name={ICON.plug} size={10} />
-            <div style={{ display: "flex", fontSize: 10 }}>电压</div>
-          </div>
-          <div style={{ display: "flex", fontSize: 18, fontWeight: 700 }}>{v}</div>
+      {/* 底部：电压（展开全宽） */}
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "4px 6px" }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 2 }}>
+          <Icon name={ICON.plug} size={10} />
+          <div style={{ display: "flex", fontSize: 10 }}>电压</div>
         </div>
-        <div style={{ width: 1, background: "#000" }} />
-        <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "2px 6px" }}>
-          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", columnGap: 2 }}>
-            <Icon name={ICON.lightning} size={10} />
-            <div style={{ display: "flex", fontSize: 10 }}>电流</div>
-          </div>
-          <div style={{ display: "flex", fontSize: 18, fontWeight: 700 }}>{ma}</div>
-        </div>
+        <div style={{ display: "flex", fontSize: 20, fontWeight: 700 }}>{v}</div>
       </div>
     </Page>
   );
@@ -631,7 +620,6 @@ export function defaultParams() {
     battery: 78,
     state: "放电",
     bat_v: 4.123,
-    bat_i: -150,
     bat_eta_label: "续航约",
     bat_eta_val: "8时30分",
     rssi: -55,
