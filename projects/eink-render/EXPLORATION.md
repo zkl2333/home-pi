@@ -206,7 +206,18 @@
 - **测量同源**：advance `'1'=43 ':'=21 合计193`，与 PIL/FreeType **逐数字一致**。
 - 直接读 1-bit buffer（`HEAPU8` 按 pitch/MSB-first 解包），spike#1 的 RGBA-alpha + 堆视图失效两个坑从源头消失。
 
-**结论**：纯 Node 路（JS Yoga 不动 + 自编 FreeType-WASM MONO 供测量与光栅、退役 Python/PIL）**端到端实证通过，无遗留阻断**。唯一未测变量：Pi armv7 上 wasm 运行时延迟（产物 arch 中立，行为同 CI、仅速度差）——属"待测一个数字"，非方案风险。**生产迁移未实施**——方向已坐实，下一步是把该 .wasm 拿到 Pi 实测延迟，再谈是否启动迁移。
+**结论**：纯 Node 路（JS Yoga 不动 + 自编 FreeType-WASM MONO 供测量与光栅、退役 Python/PIL）**端到端实证通过，无遗留阻断**。
+
+#### Pi armv7l 真机实测（最后一个未知数，已落地）
+
+CI 产物 .wasm 推 Pi(`~/spike2-freetype-wasm/`，Node v22.22.2，armv7l)跑 test.mjs，2 次稳定：
+
+- 模块 init ~280–334ms：一次性，常驻 daemon（同现 Python 模式）摊销掉，无关。
+- 小字 CJK（wqy 24px）：5 字形 ~7ms（~1.3ms/字形）——正文级别快。
+- 大字时钟（Archivo 64px）：5 字形 ~57ms——唯一偏大值，但是 **未缓存首绘最坏情况**；时钟字符集有限（10 数字+冒号）天然可缓存→稳态≈0；且其后紧跟的墨水屏局刷本身数百 ms~秒级，渲染被完全淹没；eink-status 仅分钟/关键字段变化才刷。
+- `pixel_mode=1`、advance `43/21/193`、`晴=24…` 与 PIL/CI **逐像素一致**——真机亦成立。
+
+**判定：Pi 性能可接受，无红灯。** 纯 Node 路 = 端到端 + 真机全部验证通过。**生产迁移仍未实施**——这是独立大改（自写 glyph-blit/行排版替掉 PIL ImageDraw + 把 measureText 接到 wasm advance + glyph 缓存 + 退役 Python daemon/协议 + .wasm 入库 + bootstrap/CI），需显式启动决策，不在 spike 范围。
 
 ---
 
