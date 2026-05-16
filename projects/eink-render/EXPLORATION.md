@@ -193,7 +193,20 @@
 
 **唯一阻断（仅 stock 产物，非方案）**：stock 预编译 .wasm 加载 4.4MB wqy CJK 字体 **`Aborted(OOM)`，且 JS `INITIAL_MEMORY=256MB` 覆盖无效**（非增长构建/内存上限焊死）。CJK 是本项目正文主体 → **stock 包生产不可用**。
 
-**收敛结论**：纯 Node 路（JS Yoga 不动 + FreeType-WASM MONO 供测量+光栅、退役 Python）在每个基本面都成立，唯一阻断是 stock wasm 的 CJK 内存上限——即两轮前已标注的"自编最小 FreeType-WASM"兜底。spike 把它从"可能要"变成"**必须且明确值得**(其余全绿)"。**下一步 = spike#2**：Emscripten 自编最小 FreeType-WASM——`-sALLOW_MEMORY_GROWTH=1`（吃下 4.4MB CJK）+ 直接导出 1-bit `bitmap.buffer`（免 RGBA ImageData 往返与堆视图失效）+ 最小导出面；GitHub CI 构建，.wasm 入库（同字体）。**生产迁移未实施**——方向已验证。
+**收敛结论**：纯 Node 路（JS Yoga 不动 + FreeType-WASM MONO 供测量+光栅、退役 Python）在每个基本面都成立，唯一阻断是 stock wasm 的 CJK 内存上限——即两轮前已标注的"自编最小 FreeType-WASM"兜底。spike 把它从"可能要"变成"**必须且明确值得**(其余全绿)"。
+
+#### spike#2 结果（自编 FreeType-WASM，CI 实证，`spike2-freetype-wasm/`）
+
+`glue.c`(最小 C 面，直接导出 1-bit buffer) + `build.sh`(emsdk 里 CMake 编 FreeType 2.13.3，砍 zlib/png/harfbuzz/brotli) + `Dockerfile`/CI workflow（`emscripten/emsdk:3.1.74`，commit `c0bf543`，2 轮迭代转绿——第 1 轮 `$0` 相对路径找不到 glue.c，开头抓绝对 SCRIPT_DIR 即修，典型 spike 节奏）。CI(`emscripten/emsdk` 容器)实跑结果：
+
+- **产物**：`freetype-mono.wasm` **589KB**（比 stock 998KB 小 40%），+ 64KB ES6 glue。arch 中立，可入库如字体。
+- **Node 启动** ~12ms，干净 ES6 模块。
+- **真 MONO**：Archivo Black 与 **wqy CJK 均 `pixel_mode=1`**，crisp 无 AA（产物 PNG 肉眼确认 `15:04` / `晴22°C`）。
+- **OOM 阻断消除**：**wqy-microhei.ttc 4.94MB（比原 ttf 更大）`load=0.1ms` 正常**——`-sALLOW_MEMORY_GROWTH=1` 生效，stock 那个唯一阻断没了。
+- **测量同源**：advance `'1'=43 ':'=21 合计193`，与 PIL/FreeType **逐数字一致**。
+- 直接读 1-bit buffer（`HEAPU8` 按 pitch/MSB-first 解包），spike#1 的 RGBA-alpha + 堆视图失效两个坑从源头消失。
+
+**结论**：纯 Node 路（JS Yoga 不动 + 自编 FreeType-WASM MONO 供测量与光栅、退役 Python/PIL）**端到端实证通过，无遗留阻断**。唯一未测变量：Pi armv7 上 wasm 运行时延迟（产物 arch 中立，行为同 CI、仅速度差）——属"待测一个数字"，非方案风险。**生产迁移未实施**——方向已坐实，下一步是把该 .wasm 拿到 Pi 实测延迟，再谈是否启动迁移。
 
 ---
 
